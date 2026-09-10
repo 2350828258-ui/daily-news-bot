@@ -480,7 +480,7 @@ def job_news_push(topics: list[str]) -> int:
         return 1
 
     # 发送文档链接到飞书群
-    message = f"🔔 大壮一号 | 每日AI日报已生成，请查收：\n{doc_url}"
+    message = f"🔔 大壮一号 | 大壮家族的朋友们，每日AI日报已生成，请查收：\n{doc_url}"
     result = send_with_sign(message)
 
     if result.get("code") == 0:
