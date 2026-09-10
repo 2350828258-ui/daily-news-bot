@@ -1,7 +1,7 @@
 """
-每日科技新闻推送机器人（大壮一号版本 - 飞书文档版）
+每日科技新闻推送机器人（大壮一号版本 - 飞书文档+按月归档版）
 
-通过公开 RSS 按自定义主题拉取资讯，创建飞书文档并推送到群。
+通过公开 RSS 按自定义主题拉取资讯，创建飞书文档并按月归档，推送到群。
 """
 from __future__ import annotations
 
@@ -54,6 +54,7 @@ FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "").strip().lstrip("\ufeff"
 FEISHU_SECRET = os.getenv("FEISHU_SECRET", "").strip().lstrip("\ufeff")
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "").strip()
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "").strip()
+FEISHU_ARCHIVE_FOLDER_TOKEN = os.getenv("FEISHU_ARCHIVE_FOLDER_TOKEN", "").strip()
 
 KEYWORDS = ["大壮一号", "每日资讯"]
 
@@ -146,6 +147,8 @@ def validate_config() -> None:
     if missing:
         logger.error("缺少必要环境变量: %s", ", ".join(missing))
         sys.exit(1)
+    if not FEISHU_ARCHIVE_FOLDER_TOKEN:
+        logger.warning("未配置 FEISHU_ARCHIVE_FOLDER_TOKEN，文档将创建在云空间根目录")
 
 
 def parse_topics(raw: str | None) -> list[str]:
@@ -372,6 +375,46 @@ def _get_tenant_access_token() -> str:
     return token
 
 
+def _get_or_create_monthly_folder(token: str, headers: dict) -> str:
+    """
+    在归档根文件夹下获取或创建当月的子文件夹。
+    返回该子文件夹的 token（folder_token），失败时返回空字符串。
+    """
+    if not FEISHU_ARCHIVE_FOLDER_TOKEN:
+        return ""
+
+    current_month = datetime.now().strftime("%Y-%m")
+    logger.info("检查归档文件夹: %s", current_month)
+
+    try:
+        # 1. 列出根文件夹下的文件
+        list_url = "https://open.feishu.cn/open-apis/drive/v1/files"
+        params = {"folder_token": FEISHU_ARCHIVE_FOLDER_TOKEN, "page_size": 200}
+        resp = requests.get(list_url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        files = resp.json().get("data", {}).get("files", [])
+
+        # 2. 查找是否已存在当月文件夹
+        for f in files:
+            if f.get("type") == "folder" and f.get("name") == current_month:
+                folder_token = f.get("token")
+                logger.info("✅ 已找到当月归档文件夹: %s (token: %s)", current_month, folder_token)
+                return folder_token
+
+        # 3. 不存在则创建
+        create_folder_url = "https://open.feishu.cn/open-apis/drive/v1/files/create_folder"
+        payload = {"name": current_month, "folder_token": FEISHU_ARCHIVE_FOLDER_TOKEN}
+        resp = requests.post(create_folder_url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        new_token = resp.json().get("data", {}).get("token")
+        logger.info("✅ 已创建当月归档文件夹: %s (token: %s)", current_month, new_token)
+        return new_token or ""
+
+    except Exception as e:
+        logger.warning("获取/创建归档文件夹失败，文档将创建在根目录: %s", e)
+        return ""
+
+
 def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[dict]:
     today = datetime.now().strftime("%Y年%m月%d日")
     blocks = []
@@ -420,9 +463,17 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
         "Content-Type": "application/json; charset=utf-8",
     }
 
-    # 1. 创建文档
+    # ========== 获取或创建当月归档文件夹 ==========
+    monthly_folder_token = _get_or_create_monthly_folder(token, headers)
+    # ===============================================
+
+    # 1. 创建文档（如果拿到了月份文件夹 token，就放进去）
     create_url = "https://open.feishu.cn/open-apis/docx/v1/documents"
-    resp = requests.post(create_url, headers=headers, json={"title": title}, timeout=REQUEST_TIMEOUT)
+    payload = {"title": title}
+    if monthly_folder_token:
+        payload["folder_token"] = monthly_folder_token
+
+    resp = requests.post(create_url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     doc_data = resp.json().get("data", {})
     document_id = doc_data.get("document", {}).get("document_id")
@@ -442,7 +493,7 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
     resp = requests.post(write_url, headers=headers, json=write_payload, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
 
-    # ========== 4. 修改文档权限（关键一步，让你自己能打开） ==========
+    # 4. 修改文档权限，让组织内成员可阅读
     try:
         perm_url = f"https://open.feishu.cn/open-apis/drive/v1/permissions/{document_id}/public?type=docx"
         perm_payload = {"link_share_entity": "tenant_readable"}
@@ -450,7 +501,6 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
         logger.info("修改文档权限响应: %s", resp.text)
     except Exception as e:
         logger.warning("修改文档权限失败（不影响文档创建）: %s", e)
-    # ==================================================================
 
     return f"https://feishu.cn/docx/{document_id}"
 
@@ -483,7 +533,6 @@ def job_news_push(topics: list[str]) -> int:
         logger.error("创建飞书文档失败: %s", e)
         return 1
 
-    # 发送消息时保留“大壮一号”关键词，确保飞书机器人校验通过
     message = f"🔔 大壮一号播报\n大壮家族的朋友们，今日AI日报已生成，请查收：\n{doc_url}"
     result = send_with_sign(message)
 
