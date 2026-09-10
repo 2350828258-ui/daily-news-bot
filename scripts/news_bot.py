@@ -1,11 +1,7 @@
 """
-每日科技新闻推送机器人（大壮一号版本）
+每日科技新闻推送机器人（大壮一号版本 - 飞书文档版）
 
-通过公开 RSS 按自定义主题拉取资讯，签名后推送到飞书群。
-用法:
-  python scripts/news_bot.py --once
-  python scripts/news_bot.py --once --topics "AI大模型,具身智能,每日财经热点"
-  python scripts/news_bot.py --schedule --topics "量子计算,机器人"
+通过公开 RSS 按自定义主题拉取资讯，创建飞书文档并推送到群。
 """
 from __future__ import annotations
 
@@ -35,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 
 def _load_dotenv() -> None:
-    """从项目根目录加载 .env（不覆盖已有环境变量）。"""
     env_path = Path(__file__).resolve().parents[1] / ".env"
     if not env_path.is_file():
         return
@@ -57,11 +52,11 @@ _load_dotenv()
 
 FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "").strip().lstrip("\ufeff")
 FEISHU_SECRET = os.getenv("FEISHU_SECRET", "").strip().lstrip("\ufeff")
+FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "").strip()
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "").strip()
 
-# 飞书自定义机器人的关键词校验（如果后台开启了关键词，必须包含以下词汇之一）
 KEYWORDS = ["大壮一号", "每日资讯"]
 
-# 默认主题（更改为你需要的五个领域）
 DEFAULT_TOPICS = (
     "大模型与基础技术",
     "AIGC工具与多模态",
@@ -72,33 +67,10 @@ DEFAULT_TOPICS = (
 MIN_TOPICS = 1
 MAX_TOPICS = 5
 
-# 本地定时默认（可被 .env 的 PUSH_HOUR / PUSH_MINUTE 覆盖）
 DEFAULT_PUSH_HOUR = 7
 DEFAULT_PUSH_MINUTE = 30
 
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("环境变量 %s=%r 非法，使用默认 %d", name, raw, default)
-        return default
-
-
-PUSH_HOUR = _env_int("PUSH_HOUR", DEFAULT_PUSH_HOUR)
-PUSH_MINUTE = _env_int("PUSH_MINUTE", DEFAULT_PUSH_MINUTE)
-if not (0 <= PUSH_HOUR <= 23 and 0 <= PUSH_MINUTE <= 59):
-    logger.warning(
-        "PUSH_HOUR/PUSH_MINUTE 超出范围 (%d:%02d)，回退到 %d:%02d",
-        PUSH_HOUR, PUSH_MINUTE, DEFAULT_PUSH_HOUR, DEFAULT_PUSH_MINUTE
-    )
-    PUSH_HOUR = DEFAULT_PUSH_HOUR
-    PUSH_MINUTE = DEFAULT_PUSH_MINUTE
-
-RSS_COUNT = 6
+RSS_COUNT = 3
 REQUEST_TIMEOUT = 15
 FETCH_RETRIES = 2
 USER_AGENT = (
@@ -106,14 +78,12 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
 
-# 国内可访问的科技 RSS（通用回退）
 FALLBACK_FEEDS = (
     "https://www.ithome.com/rss/",
     "https://36kr.com/feed",
     "https://www.solidot.org/index.rss",
 )
 
-# 特定主题优先源（专业站点 RSS，避免 Google 泛搜出地方杂讯）
 TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
     "行业动态与商业政策": (
         "https://rss.huxiu.com/",
@@ -121,7 +91,6 @@ TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# Google News 检索词（不填则直接用主题名）
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
     "大模型与基础技术": "大模型 OR OpenAI OR Google OR Anthropic OR DeepSeek OR 开源大模型",
     "AIGC工具与多模态": "AIGC OR Sora OR 可灵 OR Midjourney OR Stable Diffusion OR 视频生成",
@@ -130,7 +99,6 @@ TOPIC_SEARCH_QUERIES: dict[str, str] = {
     "优秀AI视频案例与创作者生态": "AI视频 OR 爆款短片 OR 创作者生态 OR 获奖AI电影 OR ComfyUI",
 }
 
-# 主题同义词：国内综合源标题很少出现完整主题词，需放宽过滤
 TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
     "大模型与基础技术": (
         "大模型", "AI大模型", "OpenAI", "Google", "Anthropic", "DeepSeek", "开源", "Llama", "Claude", "Gemini"
@@ -150,23 +118,37 @@ TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("环境变量 %s=%r 非法，使用默认 %d", name, raw, default)
+        return default
+
+
+PUSH_HOUR = _env_int("PUSH_HOUR", DEFAULT_PUSH_HOUR)
+PUSH_MINUTE = _env_int("PUSH_MINUTE", DEFAULT_PUSH_MINUTE)
+
+
 def validate_config() -> None:
-    """校验飞书环境变量，缺失则明确报错。"""
     missing = []
     if not FEISHU_WEBHOOK_URL:
         missing.append("FEISHU_WEBHOOK_URL")
     if not FEISHU_SECRET:
         missing.append("FEISHU_SECRET")
+    if not FEISHU_APP_ID:
+        missing.append("FEISHU_APP_ID")
+    if not FEISHU_APP_SECRET:
+        missing.append("FEISHU_APP_SECRET")
     if missing:
-        logger.error(
-            "缺少必要环境变量: %s。请运行 python scripts/setup_bot.py 或参考 .env.example。",
-            ", ".join(missing),
-        )
+        logger.error("缺少必要环境变量: %s", ", ".join(missing))
         sys.exit(1)
 
 
 def parse_topics(raw: str | None) -> list[str]:
-    """解析逗号分隔主题。优先：参数 > 环境变量 TOPICS > 代码默认。"""
     if raw is None or not str(raw).strip():
         env_topics = os.getenv("TOPICS", "").strip()
         if env_topics:
@@ -187,16 +169,12 @@ def parse_topics(raw: str | None) -> list[str]:
         topics.append(topic)
 
     if not (MIN_TOPICS <= len(topics) <= MAX_TOPICS):
-        logger.error(
-            "主题数量须为 %d–%d 个（英文逗号分隔），当前解析到 %d 个: %s",
-            MIN_TOPICS, MAX_TOPICS, len(topics), topics or "(空)"
-        )
+        logger.error("主题数量须为 %d–%d 个，当前解析到 %d 个", MIN_TOPICS, MAX_TOPICS, len(topics))
         sys.exit(1)
     return topics
 
 
 def topic_keywords(topic: str) -> tuple[str, ...]:
-    """从主题字符串拆出回退过滤用关键词，并合并已知同义词。"""
     parts = re.split(r"[\s/|]+|(?:\s+OR\s+)", topic, flags=re.IGNORECASE)
     keywords = [p.strip() for p in parts if p and p.strip()]
     if topic not in keywords:
@@ -215,10 +193,7 @@ def topic_keywords(topic: str) -> tuple[str, ...]:
 
 def google_news_rss_url(query: str) -> str:
     encoded = quote_plus(query)
-    return (
-        "https://news.google.com/rss/search"
-        f"?q={encoded}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-    )
+    return f"https://news.google.com/rss/search?q={encoded}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
 
 
 def strip_html(text: str) -> str:
@@ -228,29 +203,6 @@ def strip_html(text: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
-
-def clean_snippet(snippet: str) -> str:
-    if not snippet:
-        return ""
-    replacements = [
-        (r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日]?", " "),
-        (r"\d{1,2}:\d{2}(:\d{2})?", " "),
-        (r"\d+\s*[小时分钟秒天前]+", " "),
-        (r"发表于\s*", " "),
-        (r"来源[：:]\s*\S+", " "),
-        (r"作者[：:]\s*\S+", " "),
-        (r"\d+\s*阅读", ""),
-        (r"阅读\s*\d+", ""),
-        (r"编辑[：:]\s*\S+", " "),
-        (r"发布于\s*\S+", " "),
-    ]
-    for pattern, replacement in replacements:
-        snippet = re.sub(pattern, replacement, snippet)
-    snippet = re.sub(r"[。，；：、,\.;:\s]+", " ", snippet).strip()
-    if len(snippet) > 55:
-        snippet = snippet[:52] + "..."
-    return snippet
 
 
 def _fetch_feed(url: str, retries: int = FETCH_RETRIES) -> Any | None:
@@ -268,7 +220,6 @@ def _fetch_feed(url: str, retries: int = FETCH_RETRIES) -> Any | None:
             response.raise_for_status()
             feed = feedparser.parse(response.content)
             if getattr(feed, "bozo", False) and not feed.entries:
-                logger.warning("RSS 解析异常 [%s]: %s", url, getattr(feed, "bozo_exception", ""))
                 return None
             return feed
         except Exception as e:
@@ -298,10 +249,7 @@ def _entry_to_item(entry: Any, default_source: str = "") -> dict[str, str]:
 
 def _match_keywords(text: str, keywords: tuple[str, ...]) -> bool:
     lower = text.lower()
-    for kw in keywords:
-        if kw.lower() in lower:
-            return True
-    return False
+    return any(kw.lower() in lower for kw in keywords)
 
 
 _fallback_feed_cache: dict[str, Any | None] = {}
@@ -412,55 +360,94 @@ def send_with_sign(content: str) -> dict[str, Any]:
         return {"code": -1, "msg": str(e)}
 
 
-def _format_item_line(item: dict[str, str], index: int) -> str:
-    title = item["title"].replace("【", "").replace("】", "").strip()
-    title = re.sub(r"\s*[-|｜]\s*[^\s\-｜]{1,24}$", "", title).strip() or item["title"].strip()
-    url = (item.get("url") or "").strip()
-    source = (item.get("source") or "").strip()
-
-    if "huxiu.com" in url:
-        source_label = "虎嗅"
-    elif "36kr.com" in url:
-        source_label = "36氪"
-    elif source and "个人" not in source and source not in title:
-        source_label = source
-    else:
-        source_label = ""
-
-    parts = [f"{index}）{title}"]
-    if source_label:
-        parts.append(f"[{source_label}]")
-    if url:
-        parts.append(f"🔗 {url}")
-    return " ".join(parts)
+def _get_tenant_access_token() -> str:
+    """获取 tenant_access_token"""
+    url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    payload = {"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET}
+    resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    data = resp.json()
+    token = data.get("tenant_access_token")
+    if not token:
+        raise RuntimeError(f"获取 tenant_access_token 失败: {data}")
+    return token
 
 
-def format_news_content(sections: list[tuple[str, list[dict[str, str]]]]) -> str:
-    """按主题列表格式化新闻内容（大壮一号幽默风格）"""
-    today = datetime.now().strftime("%Y 年 %m 月 %d 日")
-    
-    # 大壮一号的幽默开场白
-    lines = [
-        f"🔔 大壮一号 | 前沿AI情报",
-        f"📅 {today}",
-        "",
-        "大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！",
-        "别人都在愁没方向，大壮一号给你们把AI最前沿的情报都端上来啦！赶紧搬好小板凳，听我给你唠唠今天的硬核干货！",
-    ]
+def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[dict]:
+    """把新闻内容构造成飞书文档的 blocks 列表"""
+    today = datetime.now().strftime("%Y年%m月%d日")
+    blocks = []
+
+    # 开场白
+    blocks.append(_text_block(f"大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！"))
+    blocks.append(_text_block(f"今天是{today}，别人都在愁没方向，大壮一号给你们把AI最前沿的情报都端上来啦！"))
 
     for topic, news in sections:
-        lines.extend(["", f"📌 {topic}"])
+        blocks.append(_text_block(f"📌 {topic}", bold=True))
         if news:
             for i, item in enumerate(news, start=1):
-                lines.append(_format_item_line(item, i))
+                title = item["title"].replace("【", "").replace("】", "").strip()
+                url = (item.get("url") or "").strip()
+                line = f"{i}）{title}"
+                if url:
+                    line += f" 🔗 {url}"
+                blocks.append(_text_block(line))
         else:
-            lines.append("今天这板块兄弟们没整出啥大动静，让大壮一号再去打探打探～")
+            blocks.append(_text_block("今天这板块兄弟们没整出啥大动静，让大壮一号再去打探打探～"))
 
-    lines.extend([
-        "",
-        "好啦，今天的吹牛就到这里！大壮一号祝各位大壮家族的朋友们，新的一天吃嘛嘛香，做视频不卡顿！咱们明天不见不散！😎✨",
-    ])
-    return "\n".join(lines)
+    blocks.append(_text_block("好啦，今天的吹牛就到这里！大壮一号祝各位大壮家族的朋友们，新的一天吃嘛嘛香，做视频不卡顿！😎✨"))
+    return blocks
+
+
+def _text_block(text: str, bold: bool = False) -> dict:
+    """构造一个文本 block"""
+    return {
+        "block_type": 2,
+        "text": {
+            "elements": [
+                {
+                    "text_run": {
+                        "content": text,
+                        "text_element_style": {"bold": bold}
+                    }
+                }
+            ],
+            "style": {}
+        }
+    }
+
+
+def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, str]]]]) -> str:
+    """创建飞书文档并写入内容，返回文档链接"""
+    token = _get_tenant_access_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+
+    # 1. 创建文档
+    create_url = "https://open.feishu.cn/open-apis/docx/v1/documents"
+    resp = requests.post(create_url, headers=headers, json={"title": title}, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    doc_data = resp.json().get("data", {})
+    document_id = doc_data.get("document", {}).get("document_id")
+    if not document_id:
+        raise RuntimeError(f"创建文档失败: {resp.text}")
+
+    # 2. 获取文档的根 block
+    doc_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}"
+    resp = requests.get(doc_url, headers=headers, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    root_block_id = resp.json().get("data", {}).get("document", {}).get("document_id")
+
+    # 3. 写入内容
+    blocks = _build_doc_blocks(sections)
+    write_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}/blocks/{root_block_id}/children"
+    write_payload = {"children": blocks, "index": 0}
+    resp = requests.post(write_url, headers=headers, json=write_payload, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+
+    return f"https://feishu.cn/docx/{document_id}"
 
 
 def job_news_push(topics: list[str]) -> int:
@@ -482,53 +469,34 @@ def job_news_push(topics: list[str]) -> int:
         logger.error("未获取到任何新闻，任务终止")
         return 1
 
-    content = format_news_content(sections)
-    logger.info("正在发送到飞书...")
-    result = send_with_sign(content)
+    # 创建飞书文档
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    doc_title = f"大壮一号AI日报 | {today_str}"
+    try:
+        doc_url = create_feishu_document(doc_title, sections)
+        logger.info("✅ 文档创建成功: %s", doc_url)
+    except Exception as e:
+        logger.error("创建飞书文档失败: %s", e)
+        return 1
+
+    # 发送文档链接到飞书群
+    message = f"大壮家族的朋友们，今日AI日报已生成，请查收：\n{doc_url}"
+    result = send_with_sign(message)
 
     if result.get("code") == 0:
-        logger.info("✅ 推送成功！")
+        logger.info("✅ 文档链接推送成功！")
         return 0
-
-    logger.error("❌ 推送失败: %s", result.get("msg"))
-    return 1
-
-
-def run_schedule(topics: list[str]) -> None:
-    from apscheduler.schedulers.blocking import BlockingScheduler
-    from apscheduler.triggers.cron import CronTrigger
-
-    webhook_preview = FEISHU_WEBHOOK_URL[:50] if FEISHU_WEBHOOK_URL else "(empty)"
-    push_label = f"{PUSH_HOUR:02d}:{PUSH_MINUTE:02d}"
-    logger.info("🚀 每日新闻推送机器人启动（定时模式）")
-    logger.info("Webhook: %s...", webhook_preview)
-    logger.info("关键词: %s", KEYWORDS)
-    logger.info("主题: %s", ", ".join(topics))
-
-    scheduler = BlockingScheduler(timezone="Asia/Shanghai")
-    scheduler.add_job(
-        job_news_push,
-        CronTrigger(hour=PUSH_HOUR, minute=PUSH_MINUTE, timezone="Asia/Shanghai"),
-        args=[topics],
-        id="daily_news_push",
-        name="每日新闻推送",
-    )
-    logger.info("⏰ 定时任务已添加：每天北京时间 %s", push_label)
-    logger.info("📡 等待执行中...")
-
-    try:
-        scheduler.start()
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("⛔ 机器人已停止")
-        sys.exit(0)
+    else:
+        logger.error("❌ 文档链接推送失败: %s", result.get("msg"))
+        return 1
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="每日科技新闻推送机器人")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--once", action="store_true", help="推送一次后退出（默认，适合 Cron / GitHub Actions）")
-    mode.add_argument("--schedule", action="store_true", help=f"长驻定时：每天北京时间 {PUSH_HOUR:02d}:{PUSH_MINUTE:02d} 推送")
-    parser.add_argument("--topics", type=str, default=None, help=f'推送主题，英文逗号分隔')
+    mode.add_argument("--once", action="store_true", help="推送一次后退出")
+    mode.add_argument("--schedule", action="store_true", help="长驻定时")
+    parser.add_argument("--topics", type=str, default=None, help="推送主题")
     return parser.parse_args()
 
 
@@ -538,7 +506,11 @@ def main() -> None:
     topics = parse_topics(args.topics)
 
     if args.schedule:
-        run_schedule(topics)
+        from apscheduler.schedulers.blocking import BlockingScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+        scheduler.add_job(job_news_push, CronTrigger(hour=PUSH_HOUR, minute=PUSH_MINUTE, timezone="Asia/Shanghai"), args=[topics])
+        scheduler.start()
         return
 
     exit_code = job_news_push(topics)
