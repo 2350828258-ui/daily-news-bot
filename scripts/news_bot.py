@@ -71,7 +71,7 @@ MAX_TOPICS = 5
 DEFAULT_PUSH_HOUR = 7
 DEFAULT_PUSH_MINUTE = 30
 
-RSS_COUNT = 5
+RSS_COUNT = 10
 REQUEST_TIMEOUT = 15
 FETCH_RETRIES = 2
 USER_AGENT = (
@@ -327,16 +327,24 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: set[str] = set()
     results: list[dict[str, str]] = []
 
-    # 1) 第五板块专属：只从创作者社区抓取，绝不碰国内综合科技媒体
+    # 1) 第五板块专属：创作者社区优先，但去掉严格的过滤词（因为社区里全是作品）
     if topic == "优秀AI视频案例与创作者生态":
+        logger.info("「%s」优先从全球创作者社区抓取...", topic)
+        # 注意这里 keywords=None，意思是只要是创作者社区的热门帖子，直接拿走，不过滤关键词
         creator_items = _collect_from_feeds(
-            _load_feeds(CREATOR_FEEDS), keywords=keywords, count=count, seen_titles=seen_titles
+            _load_feeds(CREATOR_FEEDS), keywords=None, count=count, seen_titles=seen_titles
         )
-        return creator_items[:count]
+        if creator_items:
+            results.extend(creator_items)
+            logger.info("从创作者社区抓取到 %d 条", len(results))
+            if len(results) >= count:
+                return results[:count]
+        else:
+            logger.info("创作者社区暂时无法访问，启用 Google News 兜底...")
 
-    # 2) 其他板块：按原逻辑（优先源 -> Google News -> 国内综合媒体）
+    # 2) 其他板块，以及第五板块的兜底：优先源 -> Google News -> 国内媒体
     primary_urls = TOPIC_PRIMARY_FEEDS.get(topic)
-    if primary_urls:
+    if primary_urls and topic != "优秀AI视频案例与创作者生态":
         primary_items = _collect_from_feeds(
             _load_feeds(primary_urls), keywords=None, count=count, seen_titles=seen_titles
         )
