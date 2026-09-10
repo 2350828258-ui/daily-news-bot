@@ -93,14 +93,13 @@ FALLBACK_FEEDS = (
     "https://www.geekpark.net/rss",
 )
 
-# 全球高质量AIGC创作者社区（第五个板块专属，最高优先级）
+# 全球高质量AIGC创作者社区（第五个板块专属）
 CREATOR_FEEDS = (
     "https://www.reddit.com/r/aivideo/.rss",
     "https://www.reddit.com/r/Midjourney/.rss",
     "https://www.reddit.com/r/StableDiffusion/.rss",
     "https://www.reddit.com/r/aiArt/.rss",
     "https://www.reddit.com/r/comfyui/.rss",
-    # 你如果有B站UP主或新片场的RSS源，可以直接加在这里
 )
 
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
@@ -232,13 +231,10 @@ def _is_recent(entry: Any, days: int = 2) -> bool:
 
 
 def _is_duplicate_title(title: str, seen_titles: list[str]) -> bool:
-    """智能去重：如果标题相似度超过 80%，则判定为同一事件。"""
     title_clean = title.strip().lower()
     for seen in seen_titles:
-        # 完全一致
         if title_clean == seen:
             return True
-        # 相似度检查（80%以上视为重复）
         if difflib.SequenceMatcher(None, title_clean, seen).ratio() > 0.8:
             return True
     return False
@@ -292,11 +288,13 @@ def _match_keywords(text: str, keywords: tuple[str, ...]) -> bool:
 
 
 _fallback_feed_cache: dict[str, Any | None] = {}
+# 黑名单：封杀所有无关广告和低质内容
 _TITLE_BLOCKLIST = (
     "个人中心", "的个人主页", "登录", "注册", "甘肃日报", "兰州晚报", "新甘肃",
     "广告", "抽奖", "免费领取", "点击购买", "优惠", "招商", "代理", "兼职",
     "月入", "震惊", "速看", "删前", "福利", "下载", "安装", "扫码", "加群",
     "培训", "变现", "副业", "带你", "零基础", "小白", "干货", "速成", "引流",
+    "星火计划", "星辰计划", "管家婆", "足球数据", "免费版", "入口",
 )
 
 
@@ -330,11 +328,8 @@ def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles):
                 blob = f"{item['title']} {item['snippet']}"
                 if not _match_keywords(blob, keywords):
                     continue
-            
-            # 模糊去重：替换原来的精确匹配
             if _is_duplicate_title(item["title"], seen_titles):
                 continue
-                
             seen_titles.append(item["title"].strip().lower())
             results.append(item)
             if len(results) >= count:
@@ -344,10 +339,10 @@ def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles):
 
 def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, str]]:
     keywords = topic_keywords(topic)
-    seen_titles: list[str] = []  # 改用 list 以便模糊匹配
+    seen_titles: list[str] = []
     results: list[dict[str, str]] = []
 
-    # ========== 第五板块专属逻辑：全球创作者社区最高优先级，彻底切断 Google News ==========
+    # ========== 第五板块专属逻辑：全球创作者社区最高优先级，绝对不碰 Google News ==========
     if topic == "优秀AIGC案例":
         logger.info("「%s」优先从全球AIGC创作者社区抓取...", topic)
         creator_items = _collect_from_feeds(
@@ -358,10 +353,9 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
         )
         results.extend(creator_items)
         logger.info("创作者社区抓到 %d 条", len(results))
-        # 无论抓没抓够，直接返回，绝不走 Google News
         return results[:count]
 
-    # ========== 前四个板块：国内媒体 -> Google News 补充 ==========
+    # ========== 前四个板块：国内媒体优先 ==========
     logger.info("「%s」优先从国内高质量科技媒体抓取...", topic)
     domestic_news = _collect_from_feeds(
         _load_feeds(FALLBACK_FEEDS),
@@ -470,7 +464,7 @@ def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[
     blocks = []
 
     blocks.append(_text_block("大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！"))
-    blocks.append(_text_block(f"别人都在愁没方向，大壮一号给你们把AI最前沿的情报都端上来啦！赶紧搬好小板凳，听我给你唠唠今天的硬核干货！"))
+    blocks.append(_text_block(f"今天是{today}，大壮一号给你们把近2天的AI前沿情报都端上来啦！"))
 
     for topic, news in sections:
         blocks.append(_text_block(f"📌 {topic}", bold=True))
