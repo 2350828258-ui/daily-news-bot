@@ -79,12 +79,11 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
 
+# 综合科技媒体（主要供前四个板块使用）
 FALLBACK_FEEDS = (
-    # 综合科技
     "https://www.ithome.com/rss/",
     "https://36kr.com/feed",
     "https://www.solidot.org/index.rss",
-    # AI垂直媒体
     "https://www.jiqizhixin.com/rss",
     "https://www.qbitai.com/feed",
     "https://www.infoq.cn/feed",
@@ -93,13 +92,15 @@ FALLBACK_FEEDS = (
     "https://rss.huxiu.com/",
     "https://www.tmtpost.com/feed",
     "https://www.geekpark.net/rss",
-    # 全球高质量创作者社区（涵盖视频、绘画、艺术作品）
+)
+
+# 全球高质量创作者社区（第五个板块专属）
+CREATOR_FEEDS = (
     "https://www.reddit.com/r/aivideo/.rss",
     "https://www.reddit.com/r/comfyui/.rss",
     "https://www.reddit.com/r/Midjourney/.rss",
     "https://www.reddit.com/r/StableDiffusion/.rss",
     "https://www.reddit.com/r/aiArt/.rss",
-    "https://www.reddit.com/r/artificial/.rss",
 )
 
 TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
@@ -107,14 +108,7 @@ TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
         "https://rss.huxiu.com/",
         "https://36kr.com/feed",
     ),
-    # 这个板块专属：优先从全球创作者社区抓取
-    "优秀AI视频案例与创作者生态": (
-        "https://www.reddit.com/r/aivideo/.rss",
-        "https://www.reddit.com/r/comfyui/.rss",
-        "https://www.reddit.com/r/Midjourney/.rss",
-        "https://www.reddit.com/r/StableDiffusion/.rss",
-        "https://www.reddit.com/r/aiArt/.rss",
-    ),
+    "优秀AI视频案例与创作者生态": CREATOR_FEEDS,
 }
 
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
@@ -122,7 +116,6 @@ TOPIC_SEARCH_QUERIES: dict[str, str] = {
     "AIGC工具与多模态": "AIGC OR Sora OR 可灵 OR Midjourney OR Stable Diffusion OR AI视频 OR AI绘画",
     "AI智能体与行业落地": "AI Agent OR 智能体 OR 具身智能 OR 人形机器人 OR 自动化工作流",
     "行业动态与商业政策": "AI 融资 OR AI 政策 OR AI 监管 OR 科技行业动态 OR AI芯片",
-    # 扩宽到图画、插画、艺术、短片，同时保留高门槛词汇过滤低质内容
     "优秀AI视频案例与创作者生态": "AI短片 获奖 OR AI电影节 OR AI绘画 作品 OR Midjourney 艺术 OR Stable Diffusion 插画 OR 创作者 分享",
 }
 
@@ -139,7 +132,6 @@ TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
     "行业动态与商业政策": (
         "融资", "并购", "IPO", "财报", "政策", "监管", "法规", "商业动态", "合作", "市场"
     ),
-    # 这里的过滤词也扩展到了图画、插画、艺术
     "优秀AI视频案例与创作者生态": (
         "AI短片", "获奖", "电影节", "AI绘画", "插画", "艺术作品", "Midjourney", "Stable Diffusion", "创作者", "ComfyUI", "Runway", "Sora"
     ),
@@ -335,6 +327,14 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: set[str] = set()
     results: list[dict[str, str]] = []
 
+    # 1) 第五板块专属：只从创作者社区抓取，绝不碰国内综合科技媒体
+    if topic == "优秀AI视频案例与创作者生态":
+        creator_items = _collect_from_feeds(
+            _load_feeds(CREATOR_FEEDS), keywords=keywords, count=count, seen_titles=seen_titles
+        )
+        return creator_items[:count]
+
+    # 2) 其他板块：按原逻辑（优先源 -> Google News -> 国内综合媒体）
     primary_urls = TOPIC_PRIMARY_FEEDS.get(topic)
     if primary_urls:
         primary_items = _collect_from_feeds(
