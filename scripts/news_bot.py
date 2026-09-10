@@ -123,6 +123,7 @@ TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
     "行业动态与商业政策": (
         "AI融资", "AI政策", "AI监管", "AI芯片", "AI商业", "大模型商业", "人工智能行业", "AI战略"
     ),
+    # 因为第五板块已经取消了关键词过滤（keywords=None），这里的词仅作备用
     "优秀AIGC案例": (
         "AIGC", "AI视频", "AI绘画", "作品", "演示", "创意", "生成",
         "Midjourney", "Stable Diffusion", "Sora", "ComfyUI",
@@ -315,12 +316,12 @@ def _load_feeds(urls: tuple[str, ...]) -> list[tuple[str, Any]]:
     return loaded
 
 
-def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles):
+def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles, days=2):
     results: list[dict[str, str]] = []
     for feed_url, feed in feed_pairs:
         feed_title = getattr(feed.feed, "title", "") or feed_url
         for entry in feed.entries:
-            if not _is_recent(entry, days=2):
+            if not _is_recent(entry, days=days):
                 continue
             item = _entry_to_item(entry, default_source=str(feed_title))
             if _is_junk_item(item):
@@ -343,24 +344,28 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: list[str] = []
     results: list[dict[str, str]] = []
 
+    # ========== 第五板块专属逻辑：单独设置为近7天，取消关键词门槛 ==========
     if topic == "优秀AIGC案例":
-        logger.info("「%s」优先从全球AIGC创作者社区抓取...", topic)
+        logger.info("「%s」优先从全球AIGC创作者社区抓取（近7天，放宽过滤）...", topic)
         creator_items = _collect_from_feeds(
             _load_feeds(CREATOR_FEEDS),
-            keywords=keywords,
+            keywords=None,   # 取消关键词过滤，依靠社区本身质量和黑名单防垃圾
             count=count,
             seen_titles=seen_titles,
+            days=7           # 单独放宽到7天
         )
         results.extend(creator_items)
         logger.info("创作者社区抓到 %d 条", len(results))
         return results[:count]
 
-    logger.info("「%s」优先从国内高质量科技媒体抓取...", topic)
+    # ========== 前四个板块：严格近2天，国内媒体优先 ==========
+    logger.info("「%s」优先从国内高质量科技媒体抓取（近2天）...", topic)
     domestic_news = _collect_from_feeds(
         _load_feeds(FALLBACK_FEEDS),
         keywords=keywords,
         count=count,
         seen_titles=seen_titles,
+        days=2
     )
     results.extend(domestic_news)
     logger.info("国内媒体抓到 %d 条", len(results))
@@ -573,10 +578,9 @@ def job_news_push(topics: list[str]) -> int:
         logger.error("创建飞书文档失败: %s", e)
         return 1
 
-    # ========== 改动在这里：飞书推送消息加上日期 ==========
+    # 飞书推送消息加上日期
     today_display = datetime.now().strftime("%Y年%m月%d日")
     message = f"🔔 大壮一号播报 | {today_display}\n大壮家族的朋友们，今日AI日报已生成，请查收：\n{doc_url}"
-    # ====================================================
 
     result = send_with_sign(message)
 
