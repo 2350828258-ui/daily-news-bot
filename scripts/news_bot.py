@@ -432,7 +432,7 @@ def _generate_daily_summary(sections: list[tuple[str, list[dict[str, str]]]]) ->
                 "Content-Type": "application/json",
             },
             json={
-                "model": "deepseek-flash",  # 官方最新标准模型名
+                "model": "deepseek-chat",  # 官方最新标准模型名
                 "messages": [
                     {"role": "system", "content": "你是一个专业的AI行业分析师，擅长提炼核心趋势。"},
                     {"role": "user", "content": prompt},
