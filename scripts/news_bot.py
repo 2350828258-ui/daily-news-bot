@@ -361,7 +361,6 @@ def send_with_sign(content: str) -> dict[str, Any]:
 
 
 def _get_tenant_access_token() -> str:
-    """获取 tenant_access_token"""
     url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
     payload = {"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET}
     resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
@@ -374,12 +373,10 @@ def _get_tenant_access_token() -> str:
 
 
 def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[dict]:
-    """把新闻内容构造成飞书文档的 blocks 列表"""
     today = datetime.now().strftime("%Y年%m月%d日")
     blocks = []
 
-    # 开场白
-    blocks.append(_text_block(f"大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！"))
+    blocks.append(_text_block("大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！"))
     blocks.append(_text_block(f"今天是{today}，别人都在愁没方向，大壮一号给你们把AI最前沿的情报都端上来啦！"))
 
     for topic, news in sections:
@@ -400,7 +397,6 @@ def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[
 
 
 def _text_block(text: str, bold: bool = False) -> dict:
-    """构造一个文本 block"""
     return {
         "block_type": 2,
         "text": {
@@ -418,7 +414,6 @@ def _text_block(text: str, bold: bool = False) -> dict:
 
 
 def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, str]]]]) -> str:
-    """创建飞书文档并写入内容，返回文档链接"""
     token = _get_tenant_access_token()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -434,7 +429,7 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
     if not document_id:
         raise RuntimeError(f"创建文档失败: {resp.text}")
 
-    # 2. 获取文档的根 block
+    # 2. 获取根 block
     doc_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}"
     resp = requests.get(doc_url, headers=headers, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
@@ -446,6 +441,16 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
     write_payload = {"children": blocks, "index": 0}
     resp = requests.post(write_url, headers=headers, json=write_payload, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
+
+    # ========== 4. 修改文档权限（关键一步，让你自己能打开） ==========
+    try:
+        perm_url = f"https://open.feishu.cn/open-apis/drive/v1/permissions/{document_id}/public?type=docx"
+        perm_payload = {"link_share_entity": "tenant_readable"}
+        resp = requests.patch(perm_url, headers=headers, json=perm_payload, timeout=REQUEST_TIMEOUT)
+        logger.info("修改文档权限响应: %s", resp.text)
+    except Exception as e:
+        logger.warning("修改文档权限失败（不影响文档创建）: %s", e)
+    # ==================================================================
 
     return f"https://feishu.cn/docx/{document_id}"
 
@@ -469,7 +474,6 @@ def job_news_push(topics: list[str]) -> int:
         logger.error("未获取到任何新闻，任务终止")
         return 1
 
-    # 创建飞书文档
     today_str = datetime.now().strftime("%Y-%m-%d")
     doc_title = f"大壮一号AI日报 | {today_str}"
     try:
@@ -479,8 +483,8 @@ def job_news_push(topics: list[str]) -> int:
         logger.error("创建飞书文档失败: %s", e)
         return 1
 
-    # 发送文档链接到飞书群
-    message = f"🔔 大壮一号 | 大壮家族的朋友们，每日AI日报已生成，请查收：\n{doc_url}"
+    # 发送消息时保留“大壮一号”关键词，确保飞书机器人校验通过
+    message = f"🔔 大壮一号播报\n大壮家族的朋友们，今日AI日报已生成，请查收：\n{doc_url}"
     result = send_with_sign(message)
 
     if result.get("code") == 0:
