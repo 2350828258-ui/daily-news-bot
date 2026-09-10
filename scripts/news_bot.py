@@ -104,11 +104,21 @@ FALLBACK_FEEDS = (
 )
 
 CREATOR_FEEDS = (
+    # ===== 国外Reddit社区 =====
     "https://www.reddit.com/r/aivideo/.rss",
     "https://www.reddit.com/r/Midjourney/.rss",
     "https://www.reddit.com/r/StableDiffusion/.rss",
     "https://www.reddit.com/r/aiArt/.rss",
     "https://www.reddit.com/r/comfyui/.rss",
+    # ===== 国内B站AIGC UP主（把下面的 UP主UID 替换成你喜欢的UP主ID） =====
+    # 如何找UID：打开UP主主页，看浏览器地址栏 https://space.bilibili.com/12345678，那串数字就是UID
+    # 找到后把下面三行里的 "UP主UID" 替换成真实数字，并去掉行首的 # 注释符号即可启用
+    "https://rsshub.app/bilibili/user/video/412615990",
+    # "https://rsshub.app/bilibili/user/video/UP主UID_2",
+    # "https://rsshub.app/bilibili/user/video/UP主UID_3",
+    # "https://rsshub.app/bilibili/user/video/UP主UID_4",
+    # "https://rsshub.app/bilibili/user/video/UP主UID_5",
+    # "https://rsshub.app/bilibili/user/video/UP主UID_6",
 )
 
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
