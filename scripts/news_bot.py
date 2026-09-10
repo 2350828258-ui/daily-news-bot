@@ -93,7 +93,7 @@ FALLBACK_FEEDS = (
     "https://www.geekpark.net/rss",
 )
 
-# 全球高质量AIGC创作者社区（第五个板块专属）
+# 全球高质量AIGC创作者社区（第五个板块专属，绝对不碰 Google News）
 CREATOR_FEEDS = (
     "https://www.reddit.com/r/aivideo/.rss",
     "https://www.reddit.com/r/Midjourney/.rss",
@@ -124,7 +124,9 @@ TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
         "AI融资", "AI政策", "AI监管", "AI芯片", "AI商业", "大模型商业", "人工智能行业", "AI战略"
     ),
     "优秀AIGC案例": (
-        "AIGC", "AI视频", "AI绘画", "作品", "演示", "创意", "生成", "Midjourney", "Stable Diffusion", "Sora", "ComfyUI"
+        "AIGC", "AI视频", "AI绘画", "作品", "演示", "创意", "生成",
+        "Midjourney", "Stable Diffusion", "Sora", "ComfyUI",
+        "AI video", "AI art", "Runway", "Flux", "generation", "generated", "demo", "showcase"
     ),
 }
 
@@ -288,7 +290,6 @@ def _match_keywords(text: str, keywords: tuple[str, ...]) -> bool:
 
 
 _fallback_feed_cache: dict[str, Any | None] = {}
-# 黑名单：封杀所有无关广告和低质内容
 _TITLE_BLOCKLIST = (
     "个人中心", "的个人主页", "登录", "注册", "甘肃日报", "兰州晚报", "新甘肃",
     "广告", "抽奖", "免费领取", "点击购买", "优惠", "招商", "代理", "兼职",
@@ -342,7 +343,6 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: list[str] = []
     results: list[dict[str, str]] = []
 
-    # ========== 第五板块专属逻辑：全球创作者社区最高优先级，绝对不碰 Google News ==========
     if topic == "优秀AIGC案例":
         logger.info("「%s」优先从全球AIGC创作者社区抓取...", topic)
         creator_items = _collect_from_feeds(
@@ -355,7 +355,6 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
         logger.info("创作者社区抓到 %d 条", len(results))
         return results[:count]
 
-    # ========== 前四个板块：国内媒体优先 ==========
     logger.info("「%s」优先从国内高质量科技媒体抓取...", topic)
     domestic_news = _collect_from_feeds(
         _load_feeds(FALLBACK_FEEDS),
@@ -574,7 +573,11 @@ def job_news_push(topics: list[str]) -> int:
         logger.error("创建飞书文档失败: %s", e)
         return 1
 
-    message = f"🔔 大壮一号播报\n大壮家族的朋友们，今日AI日报已生成，请查收：\n{doc_url}"
+    # ========== 改动在这里：飞书推送消息加上日期 ==========
+    today_display = datetime.now().strftime("%Y年%m月%d日")
+    message = f"🔔 大壮一号播报 | {today_display}\n大壮家族的朋友们，今日AI日报已生成，请查收：\n{doc_url}"
+    # ====================================================
+
     result = send_with_sign(message)
 
     if result.get("code") == 0:
