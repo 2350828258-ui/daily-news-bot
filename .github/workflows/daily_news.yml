@@ -26,6 +26,7 @@ jobs:
 
       - name: Run news push
         env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
           DAZHUANG_2_WEBHOOK_URL: ${{ secrets.DAZHUANG_2_WEBHOOK_URL }}
