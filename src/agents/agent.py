@@ -60,8 +60,10 @@ def build_agent(ctx=None):
     with open(config_path, 'r', encoding='utf-8') as f:
         cfg = json.load(f)
 
-    api_key = os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY")
-    base_url = os.getenv("COZE_INTEGRATION_MODEL_BASE_URL")
+    # 改为从环境变量读取 DeepSeek 的 API Key
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    # 固定 DeepSeek 的 API 地址
+    base_url = "https://api.deepseek.com"
 
     llm = ChatOpenAI(
         model=cfg['config'].get("model"),
