@@ -83,6 +83,12 @@ FALLBACK_FEEDS = (
     "https://www.ithome.com/rss/",
     "https://36kr.com/feed",
     "https://www.solidot.org/index.rss",
+    "https://www.jiqizhixin.com/rss",
+    "https://www.qbitai.com/feed",
+    "https://www.infoq.cn/feed",
+    "https://www.leiphone.com/feed",
+    "https://www.pingwest.com/feed",
+    "https://rss.huxiu.com/",
 )
 
 TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
