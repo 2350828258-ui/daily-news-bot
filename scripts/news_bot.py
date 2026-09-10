@@ -71,10 +71,7 @@ MAX_TOPICS = 5
 DEFAULT_PUSH_HOUR = 7
 DEFAULT_PUSH_MINUTE = 30
 
-# ========== 改动在这里：每个板块抓取5条 ==========
 RSS_COUNT = 5
-# =================================================
-
 REQUEST_TIMEOUT = 15
 FETCH_RETRIES = 2
 USER_AGENT = (
@@ -82,7 +79,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
 
-# 综合科技媒体（主要供前四个板块使用）
+# 综合科技媒体（全部需要经过关键词过滤）
 FALLBACK_FEEDS = (
     "https://www.ithome.com/rss/",
     "https://36kr.com/feed",
@@ -106,20 +103,18 @@ CREATOR_FEEDS = (
     "https://www.reddit.com/r/aiArt/.rss",
 )
 
+# 移除之前偏颇的“优先源”，让所有内容都必须经过关键词过滤
 TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
-    "行业动态与商业政策": (
-        "https://rss.huxiu.com/",
-        "https://36kr.com/feed",
-    ),
-    "优秀AI视频案例与创作者生态": CREATOR_FEEDS,
 }
 
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
-    "大模型与基础技术": "AI大模型 OR OpenAI OR Google OR Anthropic OR DeepSeek OR 大模型",
+    "大模型与基础技术": "大模型 发布 OR OpenAI OR Google OR Anthropic OR DeepSeek OR 大模型 开源",
     "AIGC工具与多模态": "AIGC OR Sora OR 可灵 OR Midjourney OR Stable Diffusion OR AI视频 OR AI绘画",
     "AI智能体与行业落地": "AI Agent OR 智能体 OR 具身智能 OR 人形机器人 OR 自动化工作流",
-    "行业动态与商业政策": "AI 融资 OR AI 政策 OR AI 监管 OR 科技行业动态 OR AI芯片",
-    "优秀AI视频案例与创作者生态": "AI短片 获奖 OR AI电影节 OR AI绘画 作品 OR Midjourney 艺术 OR Stable Diffusion 插画 OR 创作者 分享",
+    # 聚焦 AI 自身的商业和政策，过滤掉美联储、预制菜等泛商业杂音
+    "行业动态与商业政策": "AI 融资 OR AI 政策 监管 OR 大模型 商业化 OR AI芯片 动态 OR 人工智能 行业",
+    # 改变方向：不要“获奖”，要“优秀作品/演示/创意”
+    "优秀AI视频案例与创作者生态": "AI视频 演示 OR AI绘画 作品 OR Sora 生成视频 OR Midjourney 优秀作品 OR AIGC 创意",
 }
 
 TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
@@ -133,10 +128,11 @@ TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
         "AI Agent", "智能体", "具身智能", "人形机器人", "自动化工作流", "落地", "应用", "宇树", "Figure"
     ),
     "行业动态与商业政策": (
-        "融资", "并购", "IPO", "财报", "政策", "监管", "法规", "商业动态", "合作", "市场"
+        "AI融资", "AI政策", "AI监管", "AI芯片", "AI商业", "大模型商业", "人工智能行业", "AI战略"
     ),
+    # 过滤词全换，去掉了“获奖”、“电影节”，改为“作品”、“演示”、“创意”等
     "优秀AI视频案例与创作者生态": (
-        "AI短片", "获奖", "电影节", "AI绘画", "插画", "艺术作品", "Midjourney", "Stable Diffusion", "创作者", "ComfyUI", "Runway", "Sora"
+        "AI视频", "AI绘画", "作品", "演示", "创意", "生成", "Midjourney", "Stable Diffusion", "Sora", "ComfyUI"
     ),
 }
 
@@ -278,7 +274,7 @@ def _match_keywords(text: str, keywords: tuple[str, ...]) -> bool:
 
 
 _fallback_feed_cache: dict[str, Any | None] = {}
-# 黑名单：彻底封杀短视频营销号、广告、培训、引流
+# 黑名单：封杀低质内容
 _TITLE_BLOCKLIST = (
     "个人中心", "的个人主页", "登录", "注册", "甘肃日报", "兰州晚报", "新甘肃",
     "广告", "抽奖", "免费领取", "点击购买", "优惠", "招商", "代理", "兼职",
@@ -330,30 +326,7 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: set[str] = set()
     results: list[dict[str, str]] = []
 
-    # 1) 第五板块专属：创作者社区优先，但去掉严格的过滤词
-    if topic == "优秀AI视频案例与创作者生态":
-        logger.info("「%s」优先从全球创作者社区抓取...", topic)
-        creator_items = _collect_from_feeds(
-            _load_feeds(CREATOR_FEEDS), keywords=None, count=count, seen_titles=seen_titles
-        )
-        if creator_items:
-            results.extend(creator_items)
-            logger.info("从创作者社区抓取到 %d 条", len(results))
-            if len(results) >= count:
-                return results[:count]
-        else:
-            logger.info("创作者社区暂时无法访问，启用 Google News 兜底...")
-
-    # 2) 其他板块及第五板块兜底
-    primary_urls = TOPIC_PRIMARY_FEEDS.get(topic)
-    if primary_urls and topic != "优秀AI视频案例与创作者生态":
-        primary_items = _collect_from_feeds(
-            _load_feeds(primary_urls), keywords=None, count=count, seen_titles=seen_titles
-        )
-        results.extend(primary_items)
-        if len(results) >= count:
-            return results[:count]
-
+    # 1) 所有板块统一：先搜 Google News（这是最精准的来源）
     query = TOPIC_SEARCH_QUERIES.get(topic, topic)
     google_url = google_news_rss_url(query)
     feed = _fetch_feed(google_url, retries=1)
@@ -369,9 +342,24 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
             results.append(item)
             if len(results) >= count:
                 break
+
+    if len(results) >= count:
+        return results[:count]
+
+    # 2) 如果是第五个板块（创作者生态），去 Reddit 社区抓，但必须经过严格过滤
+    if topic == "优秀AI视频案例与创作者生态":
+        logger.info("「%s」去创作者社区补充内容...", topic)
+        creator_items = _collect_from_feeds(
+            _load_feeds(CREATOR_FEEDS), 
+            keywords=keywords,  # 注意：这里强制开启关键词过滤
+            count=count - len(results), 
+            seen_titles=seen_titles
+        )
+        results.extend(creator_items)
         if len(results) >= count:
             return results[:count]
 
+    # 3) 补充综合科技媒体（全部必须经过AI相关关键词过滤）
     more = _collect_from_feeds(
         _load_feeds(FALLBACK_FEEDS),
         keywords=keywords,
@@ -523,7 +511,7 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
     blocks = _build_doc_blocks(sections)
     write_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}/blocks/{root_block_id}/children"
 
-    # 分批写入，防止超过50个块的限制
+    # 分批写入
     batch_size = 50
     for i in range(0, len(blocks), batch_size):
         batch = blocks[i:i+batch_size]
