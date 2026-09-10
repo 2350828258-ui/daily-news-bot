@@ -28,6 +28,8 @@ jobs:
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          DAZHUANG_2_WEBHOOK_URL: ${{ secrets.DAZHUANG_2_WEBHOOK_URL }}
+          DAZHUANG_2_SECRET: ${{ secrets.DAZHUANG_2_SECRET }}
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_ARCHIVE_FOLDER_TOKEN: ${{ secrets.FEISHU_ARCHIVE_FOLDER_TOKEN }}
