@@ -79,19 +79,26 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
 
-# 综合科技媒体
+# 国内高质量科技媒体（前四个板块的第一优先级）
 FALLBACK_FEEDS = (
-    "https://www.ithome.com/rss/",
-    "https://36kr.com/feed",
-    "https://www.solidot.org/index.rss",
     "https://www.jiqizhixin.com/rss",
     "https://www.qbitai.com/feed",
+    "https://www.ithome.com/rss/",
+    "https://36kr.com/feed",
     "https://www.infoq.cn/feed",
     "https://www.leiphone.com/feed",
     "https://www.pingwest.com/feed",
-    "https://rss.huxiu.com/",
     "https://www.tmtpost.com/feed",
     "https://www.geekpark.net/rss",
+)
+
+# 全球高质量AIGC创作者社区（第五个板块专属，最高优先级）
+CREATOR_FEEDS = (
+    "https://www.reddit.com/r/aivideo/.rss",
+    "https://www.reddit.com/r/Midjourney/.rss",
+    "https://www.reddit.com/r/StableDiffusion/.rss",
+    "https://www.reddit.com/r/aiArt/.rss",
+    "https://www.reddit.com/r/comfyui/.rss",
 )
 
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
@@ -211,7 +218,6 @@ def strip_html(text: str) -> str:
 
 
 def _is_recent(entry: Any, days: int = 2) -> bool:
-    """判断条目是否在最近 N 天内。如果没有时间字段，默认放行（防止误杀）。"""
     for time_attr in ("published_parsed", "updated_parsed"):
         t = getattr(entry, time_attr, None)
         if t:
@@ -220,7 +226,6 @@ def _is_recent(entry: Any, days: int = 2) -> bool:
                 return datetime.now() - pub_date <= timedelta(days=days)
             except Exception:
                 pass
-    # 如果解析不出时间，为了保险默认放行，由用户根据标题自行判断
     return True
 
 
@@ -301,23 +306,15 @@ def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles):
     for feed_url, feed in feed_pairs:
         feed_title = getattr(feed.feed, "title", "") or feed_url
         for entry in feed.entries:
-            # 1) 时间过滤（必须近2天）
             if not _is_recent(entry, days=2):
                 continue
-
             item = _entry_to_item(entry, default_source=str(feed_title))
-            
-            # 2) 黑名单过滤
             if _is_junk_item(item):
                 continue
-            
-            # 3) 关键词过滤
             if keywords is not None:
                 blob = f"{item['title']} {item['snippet']}"
                 if not _match_keywords(blob, keywords):
                     continue
-            
-            # 4) 去重
             title_key = item["title"].strip().lower()
             if not title_key or title_key in seen_titles:
                 continue
@@ -333,7 +330,58 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: set[str] = set()
     results: list[dict[str, str]] = []
 
-    # 1) Google News（最精准的来源）
+    # ========== 第五板块专属逻辑：全球创作者社区最高优先级 ==========
+    if topic == "优秀AIGC案例":
+        logger.info("「%s」优先从全球AIGC创作者社区抓取...", topic)
+        # 注意：这里 keywords=keywords，强制过滤，只要作品，不要求助帖
+        creator_items = _collect_from_feeds(
+            _load_feeds(CREATOR_FEEDS),
+            keywords=keywords,
+            count=count,
+            seen_titles=seen_titles,
+        )
+        results.extend(creator_items)
+        logger.info("创作者社区抓到 %d 条", len(results))
+
+        if len(results) >= count:
+            return results[:count]
+
+        # 创作者社区不够，用 Google News 补充
+        logger.info("创作者社区不足，去 Google News 补充...")
+        query = TOPIC_SEARCH_QUERIES.get(topic, topic)
+        google_url = google_news_rss_url(query)
+        feed = _fetch_feed(google_url, retries=1)
+        if feed and feed.entries:
+            for entry in feed.entries:
+                if not _is_recent(entry, days=2):
+                    continue
+                item = _entry_to_item(entry)
+                if _is_junk_item(item):
+                    continue
+                title_key = item["title"].strip().lower()
+                if not title_key or title_key in seen_titles:
+                    continue
+                seen_titles.add(title_key)
+                results.append(item)
+                if len(results) >= count:
+                    break
+        return results[:count]
+
+    # ========== 前四个板块：国内媒体 -> Google News 补充 ==========
+    logger.info("「%s」优先从国内高质量科技媒体抓取...", topic)
+    domestic_news = _collect_from_feeds(
+        _load_feeds(FALLBACK_FEEDS),
+        keywords=keywords,
+        count=count,
+        seen_titles=seen_titles,
+    )
+    results.extend(domestic_news)
+    logger.info("国内媒体抓到 %d 条", len(results))
+
+    if len(results) >= count:
+        return results[:count]
+
+    logger.info("「%s」国内媒体不足，去 Google News 补充...", topic)
     query = TOPIC_SEARCH_QUERIES.get(topic, topic)
     google_url = google_news_rss_url(query)
     feed = _fetch_feed(google_url, retries=1)
@@ -352,17 +400,6 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
             if len(results) >= count:
                 break
 
-    if len(results) >= count:
-        return results[:count]
-
-    # 2) 综合科技媒体兜底（依然严格过滤时间和关键词）
-    more = _collect_from_feeds(
-        _load_feeds(FALLBACK_FEEDS),
-        keywords=keywords,
-        count=count - len(results),
-        seen_titles=seen_titles,
-    )
-    results.extend(more)
     return results[:count]
 
 
@@ -453,7 +490,6 @@ def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[
                     line += f" 🔗 {url}"
                 blocks.append(_text_block(line))
         else:
-            # 如果没有新闻，使用幽默语气直接说明并跳到下一个
             blocks.append(_text_block(f"大壮一号我扒拉了一圈，这两天「{topic}」连个影子都没有，估计大佬们都在憋大招呢，咱们先翻篇看看别的！😜"))
 
     blocks.append(_text_block("好啦，今天的吹牛就到这里！大壮一号祝各位大壮家族的朋友们，新的一天吃嘛嘛香，做视频不卡顿！😎✨"))
@@ -538,7 +574,6 @@ def job_news_push(topics: list[str]) -> int:
     for topic in topics:
         logger.info("正在搜索「%s」新闻...", topic)
         news = search_news_by_topic(topic, count=RSS_COUNT)
-        # 无论有没有新闻，都记录这个板块，让文档里能展示大壮一号的幽默吐槽
         sections.append((topic, news))
         if not news:
             logger.info("「%s」近2天内没有相关新闻，大壮一号将在文档中吐槽后跳过。", topic)
