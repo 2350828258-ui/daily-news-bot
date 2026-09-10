@@ -418,7 +418,7 @@ def _generate_summary(title: str, snippet: str = "") -> str:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "deepseek-v4-flash",
+                "model": "deepseek-chat",
                 "messages": [
                     {"role": "system", "content": "你是一个专业的AI新闻编辑，擅长用一句话概括新闻要点。"},
                     {"role": "user", "content": prompt},
@@ -429,6 +429,7 @@ def _generate_summary(title: str, snippet: str = "") -> str:
             timeout=30,
         )
         resp.raise_for_status()
+        logger.info("DeepSeek 原始响应: %s", resp.text)
         data = resp.json()
         summary = data["choices"][0]["message"]["content"].strip()
         return summary
