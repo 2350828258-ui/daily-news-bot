@@ -71,7 +71,10 @@ MAX_TOPICS = 5
 DEFAULT_PUSH_HOUR = 7
 DEFAULT_PUSH_MINUTE = 30
 
-RSS_COUNT = 10
+# ========== 改动在这里：每个板块抓取5条 ==========
+RSS_COUNT = 5
+# =================================================
+
 REQUEST_TIMEOUT = 15
 FETCH_RETRIES = 2
 USER_AGENT = (
@@ -327,10 +330,9 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: set[str] = set()
     results: list[dict[str, str]] = []
 
-    # 1) 第五板块专属：创作者社区优先，但去掉严格的过滤词（因为社区里全是作品）
+    # 1) 第五板块专属：创作者社区优先，但去掉严格的过滤词
     if topic == "优秀AI视频案例与创作者生态":
         logger.info("「%s」优先从全球创作者社区抓取...", topic)
-        # 注意这里 keywords=None，意思是只要是创作者社区的热门帖子，直接拿走，不过滤关键词
         creator_items = _collect_from_feeds(
             _load_feeds(CREATOR_FEEDS), keywords=None, count=count, seen_titles=seen_titles
         )
@@ -342,7 +344,7 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
         else:
             logger.info("创作者社区暂时无法访问，启用 Google News 兜底...")
 
-    # 2) 其他板块，以及第五板块的兜底：优先源 -> Google News -> 国内媒体
+    # 2) 其他板块及第五板块兜底
     primary_urls = TOPIC_PRIMARY_FEEDS.get(topic)
     if primary_urls and topic != "优秀AI视频案例与创作者生态":
         primary_items = _collect_from_feeds(
@@ -474,6 +476,8 @@ def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[
 
 
 def _text_block(text: str, bold: bool = False) -> dict:
+    if len(text) > 500:
+        text = text[:497] + "..."
     return {
         "block_type": 2,
         "text": {
@@ -518,9 +522,16 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
 
     blocks = _build_doc_blocks(sections)
     write_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}/blocks/{root_block_id}/children"
-    write_payload = {"children": blocks, "index": 0}
-    resp = requests.post(write_url, headers=headers, json=write_payload, timeout=REQUEST_TIMEOUT)
-    resp.raise_for_status()
+
+    # 分批写入，防止超过50个块的限制
+    batch_size = 50
+    for i in range(0, len(blocks), batch_size):
+        batch = blocks[i:i+batch_size]
+        write_payload = {"children": batch, "index": i}
+        resp = requests.post(write_url, headers=headers, json=write_payload, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        logger.info("已写入第 %d 批块，共 %d 个块", i // batch_size + 1, len(batch))
+        time.sleep(1)
 
     try:
         perm_url = f"https://open.feishu.cn/open-apis/drive/v1/permissions/{document_id}/public?type=docx"
