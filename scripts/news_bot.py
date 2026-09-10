@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import difflib
 import hashlib
 import hmac
 import logging
@@ -99,6 +100,7 @@ CREATOR_FEEDS = (
     "https://www.reddit.com/r/StableDiffusion/.rss",
     "https://www.reddit.com/r/aiArt/.rss",
     "https://www.reddit.com/r/comfyui/.rss",
+    # 你如果有B站UP主或新片场的RSS源，可以直接加在这里
 )
 
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
@@ -229,6 +231,19 @@ def _is_recent(entry: Any, days: int = 2) -> bool:
     return True
 
 
+def _is_duplicate_title(title: str, seen_titles: list[str]) -> bool:
+    """智能去重：如果标题相似度超过 80%，则判定为同一事件。"""
+    title_clean = title.strip().lower()
+    for seen in seen_titles:
+        # 完全一致
+        if title_clean == seen:
+            return True
+        # 相似度检查（80%以上视为重复）
+        if difflib.SequenceMatcher(None, title_clean, seen).ratio() > 0.8:
+            return True
+    return False
+
+
 def _fetch_feed(url: str, retries: int = FETCH_RETRIES) -> Any | None:
     last_error: Exception | None = None
     for attempt in range(retries + 1):
@@ -315,10 +330,12 @@ def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles):
                 blob = f"{item['title']} {item['snippet']}"
                 if not _match_keywords(blob, keywords):
                     continue
-            title_key = item["title"].strip().lower()
-            if not title_key or title_key in seen_titles:
+            
+            # 模糊去重：替换原来的精确匹配
+            if _is_duplicate_title(item["title"], seen_titles):
                 continue
-            seen_titles.add(title_key)
+                
+            seen_titles.append(item["title"].strip().lower())
             results.append(item)
             if len(results) >= count:
                 return results
@@ -327,13 +344,12 @@ def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles):
 
 def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, str]]:
     keywords = topic_keywords(topic)
-    seen_titles: set[str] = set()
+    seen_titles: list[str] = []  # 改用 list 以便模糊匹配
     results: list[dict[str, str]] = []
 
-    # ========== 第五板块专属逻辑：全球创作者社区最高优先级 ==========
+    # ========== 第五板块专属逻辑：全球创作者社区最高优先级，彻底切断 Google News ==========
     if topic == "优秀AIGC案例":
         logger.info("「%s」优先从全球AIGC创作者社区抓取...", topic)
-        # 注意：这里 keywords=keywords，强制过滤，只要作品，不要求助帖
         creator_items = _collect_from_feeds(
             _load_feeds(CREATOR_FEEDS),
             keywords=keywords,
@@ -342,29 +358,7 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
         )
         results.extend(creator_items)
         logger.info("创作者社区抓到 %d 条", len(results))
-
-        if len(results) >= count:
-            return results[:count]
-
-        # 创作者社区不够，用 Google News 补充
-        logger.info("创作者社区不足，去 Google News 补充...")
-        query = TOPIC_SEARCH_QUERIES.get(topic, topic)
-        google_url = google_news_rss_url(query)
-        feed = _fetch_feed(google_url, retries=1)
-        if feed and feed.entries:
-            for entry in feed.entries:
-                if not _is_recent(entry, days=2):
-                    continue
-                item = _entry_to_item(entry)
-                if _is_junk_item(item):
-                    continue
-                title_key = item["title"].strip().lower()
-                if not title_key or title_key in seen_titles:
-                    continue
-                seen_titles.add(title_key)
-                results.append(item)
-                if len(results) >= count:
-                    break
+        # 无论抓没抓够，直接返回，绝不走 Google News
         return results[:count]
 
     # ========== 前四个板块：国内媒体 -> Google News 补充 ==========
@@ -392,10 +386,9 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
             item = _entry_to_item(entry)
             if _is_junk_item(item):
                 continue
-            title_key = item["title"].strip().lower()
-            if not title_key or title_key in seen_titles:
+            if _is_duplicate_title(item["title"], seen_titles):
                 continue
-            seen_titles.add(title_key)
+            seen_titles.append(item["title"].strip().lower())
             results.append(item)
             if len(results) >= count:
                 break
@@ -477,7 +470,7 @@ def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[
     blocks = []
 
     blocks.append(_text_block("大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！"))
-    blocks.append(_text_block(f"今天是{today}，大壮一号给你们把近2天的AI前沿情报都端上来啦！"))
+    blocks.append(_text_block(f"别人都在愁没方向，大壮一号给你们把AI最前沿的情报都端上来啦！赶紧搬好小板凳，听我给你唠唠今天的硬核干货！"))
 
     for topic, news in sections:
         blocks.append(_text_block(f"📌 {topic}", bold=True))
