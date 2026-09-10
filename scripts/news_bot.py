@@ -14,7 +14,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import unescape
 from pathlib import Path
 from typing import Any
@@ -63,7 +63,7 @@ DEFAULT_TOPICS = (
     "AIGC工具与多模态",
     "AI智能体与行业落地",
     "行业动态与商业政策",
-    "优秀AI视频案例与创作者生态"
+    "优秀AIGC案例"
 )
 MIN_TOPICS = 1
 MAX_TOPICS = 5
@@ -79,7 +79,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
 
-# 综合科技媒体（全部需要经过关键词过滤）
+# 综合科技媒体
 FALLBACK_FEEDS = (
     "https://www.ithome.com/rss/",
     "https://36kr.com/feed",
@@ -94,27 +94,12 @@ FALLBACK_FEEDS = (
     "https://www.geekpark.net/rss",
 )
 
-# 全球高质量创作者社区（第五个板块专属）
-CREATOR_FEEDS = (
-    "https://www.reddit.com/r/aivideo/.rss",
-    "https://www.reddit.com/r/comfyui/.rss",
-    "https://www.reddit.com/r/Midjourney/.rss",
-    "https://www.reddit.com/r/StableDiffusion/.rss",
-    "https://www.reddit.com/r/aiArt/.rss",
-)
-
-# 移除之前偏颇的“优先源”，让所有内容都必须经过关键词过滤
-TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
-}
-
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
-    "大模型与基础技术": "大模型 发布 OR OpenAI OR Google OR Anthropic OR DeepSeek OR 大模型 开源",
+    "大模型与基础技术": "AI大模型 OR OpenAI OR Google OR Anthropic OR DeepSeek OR 大模型 开源",
     "AIGC工具与多模态": "AIGC OR Sora OR 可灵 OR Midjourney OR Stable Diffusion OR AI视频 OR AI绘画",
     "AI智能体与行业落地": "AI Agent OR 智能体 OR 具身智能 OR 人形机器人 OR 自动化工作流",
-    # 聚焦 AI 自身的商业和政策，过滤掉美联储、预制菜等泛商业杂音
-    "行业动态与商业政策": "AI 融资 OR AI 政策 监管 OR 大模型 商业化 OR AI芯片 动态 OR 人工智能 行业",
-    # 改变方向：不要“获奖”，要“优秀作品/演示/创意”
-    "优秀AI视频案例与创作者生态": "AI视频 演示 OR AI绘画 作品 OR Sora 生成视频 OR Midjourney 优秀作品 OR AIGC 创意",
+    "行业动态与商业政策": "AI 融资 OR AI 政策 监管 OR 大模型 商业化 OR AI芯片 动态",
+    "优秀AIGC案例": "AIGC 案例 OR AI视频 演示 OR AI绘画 作品 OR Midjourney 展示 OR Sora 视频",
 }
 
 TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
@@ -125,14 +110,13 @@ TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
         "AIGC", "Sora", "可灵", "即梦", "Midjourney", "Flux", "Stable Diffusion", "视频生成", "图像生成", "多模态"
     ),
     "AI智能体与行业落地": (
-        "AI Agent", "智能体", "具身智能", "人形机器人", "自动化工作流", "落地", "应用", "宇树", "Figure"
+        "AI Agent", "智能体", "具身智能", "人形机器人", "自动化工作流", "落地", "应用"
     ),
     "行业动态与商业政策": (
         "AI融资", "AI政策", "AI监管", "AI芯片", "AI商业", "大模型商业", "人工智能行业", "AI战略"
     ),
-    # 过滤词全换，去掉了“获奖”、“电影节”，改为“作品”、“演示”、“创意”等
-    "优秀AI视频案例与创作者生态": (
-        "AI视频", "AI绘画", "作品", "演示", "创意", "生成", "Midjourney", "Stable Diffusion", "Sora", "ComfyUI"
+    "优秀AIGC案例": (
+        "AIGC", "AI视频", "AI绘画", "作品", "演示", "创意", "生成", "Midjourney", "Stable Diffusion", "Sora", "ComfyUI"
     ),
 }
 
@@ -226,6 +210,20 @@ def strip_html(text: str) -> str:
     return text
 
 
+def _is_recent(entry: Any, days: int = 2) -> bool:
+    """判断条目是否在最近 N 天内。如果没有时间字段，默认放行（防止误杀）。"""
+    for time_attr in ("published_parsed", "updated_parsed"):
+        t = getattr(entry, time_attr, None)
+        if t:
+            try:
+                pub_date = datetime(*t[:6])
+                return datetime.now() - pub_date <= timedelta(days=days)
+            except Exception:
+                pass
+    # 如果解析不出时间，为了保险默认放行，由用户根据标题自行判断
+    return True
+
+
 def _fetch_feed(url: str, retries: int = FETCH_RETRIES) -> Any | None:
     last_error: Exception | None = None
     for attempt in range(retries + 1):
@@ -274,7 +272,6 @@ def _match_keywords(text: str, keywords: tuple[str, ...]) -> bool:
 
 
 _fallback_feed_cache: dict[str, Any | None] = {}
-# 黑名单：封杀低质内容
 _TITLE_BLOCKLIST = (
     "个人中心", "的个人主页", "登录", "注册", "甘肃日报", "兰州晚报", "新甘肃",
     "广告", "抽奖", "免费领取", "点击购买", "优惠", "招商", "代理", "兼职",
@@ -304,13 +301,23 @@ def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles):
     for feed_url, feed in feed_pairs:
         feed_title = getattr(feed.feed, "title", "") or feed_url
         for entry in feed.entries:
+            # 1) 时间过滤（必须近2天）
+            if not _is_recent(entry, days=2):
+                continue
+
             item = _entry_to_item(entry, default_source=str(feed_title))
+            
+            # 2) 黑名单过滤
             if _is_junk_item(item):
                 continue
+            
+            # 3) 关键词过滤
             if keywords is not None:
                 blob = f"{item['title']} {item['snippet']}"
                 if not _match_keywords(blob, keywords):
                     continue
+            
+            # 4) 去重
             title_key = item["title"].strip().lower()
             if not title_key or title_key in seen_titles:
                 continue
@@ -326,12 +333,14 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: set[str] = set()
     results: list[dict[str, str]] = []
 
-    # 1) 所有板块统一：先搜 Google News（这是最精准的来源）
+    # 1) Google News（最精准的来源）
     query = TOPIC_SEARCH_QUERIES.get(topic, topic)
     google_url = google_news_rss_url(query)
     feed = _fetch_feed(google_url, retries=1)
     if feed and feed.entries:
         for entry in feed.entries:
+            if not _is_recent(entry, days=2):
+                continue
             item = _entry_to_item(entry)
             if _is_junk_item(item):
                 continue
@@ -346,20 +355,7 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     if len(results) >= count:
         return results[:count]
 
-    # 2) 如果是第五个板块（创作者生态），去 Reddit 社区抓，但必须经过严格过滤
-    if topic == "优秀AI视频案例与创作者生态":
-        logger.info("「%s」去创作者社区补充内容...", topic)
-        creator_items = _collect_from_feeds(
-            _load_feeds(CREATOR_FEEDS), 
-            keywords=keywords,  # 注意：这里强制开启关键词过滤
-            count=count - len(results), 
-            seen_titles=seen_titles
-        )
-        results.extend(creator_items)
-        if len(results) >= count:
-            return results[:count]
-
-    # 3) 补充综合科技媒体（全部必须经过AI相关关键词过滤）
+    # 2) 综合科技媒体兜底（依然严格过滤时间和关键词）
     more = _collect_from_feeds(
         _load_feeds(FALLBACK_FEEDS),
         keywords=keywords,
@@ -444,7 +440,7 @@ def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[
     blocks = []
 
     blocks.append(_text_block("大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！"))
-    blocks.append(_text_block(f"今天是{today}，别人都在愁没方向，大壮一号给你们把AI最前沿的情报都端上来啦！"))
+    blocks.append(_text_block(f"今天是{today}，大壮一号给你们把近2天的AI前沿情报都端上来啦！"))
 
     for topic, news in sections:
         blocks.append(_text_block(f"📌 {topic}", bold=True))
@@ -457,7 +453,8 @@ def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[
                     line += f" 🔗 {url}"
                 blocks.append(_text_block(line))
         else:
-            blocks.append(_text_block("今天这板块兄弟们没整出啥大动静，让大壮一号再去打探打探～"))
+            # 如果没有新闻，使用幽默语气直接说明并跳到下一个
+            blocks.append(_text_block(f"大壮一号我扒拉了一圈，这两天「{topic}」连个影子都没有，估计大佬们都在憋大招呢，咱们先翻篇看看别的！😜"))
 
     blocks.append(_text_block("好啦，今天的吹牛就到这里！大壮一号祝各位大壮家族的朋友们，新的一天吃嘛嘛香，做视频不卡顿！😎✨"))
     return blocks
@@ -511,7 +508,6 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
     blocks = _build_doc_blocks(sections)
     write_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}/blocks/{root_block_id}/children"
 
-    # 分批写入
     batch_size = 50
     for i in range(0, len(blocks), batch_size):
         batch = blocks[i:i+batch_size]
@@ -539,17 +535,13 @@ def job_news_push(topics: list[str]) -> int:
     logger.info("主题: %s", ", ".join(topics))
 
     sections: list[tuple[str, list[dict[str, str]]]] = []
-    any_news = False
     for topic in topics:
         logger.info("正在搜索「%s」新闻...", topic)
         news = search_news_by_topic(topic, count=RSS_COUNT)
-        if news:
-            any_news = True
+        # 无论有没有新闻，都记录这个板块，让文档里能展示大壮一号的幽默吐槽
         sections.append((topic, news))
-
-    if not any_news:
-        logger.error("未获取到任何新闻，任务终止")
-        return 1
+        if not news:
+            logger.info("「%s」近2天内没有相关新闻，大壮一号将在文档中吐槽后跳过。", topic)
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     doc_title = f"大壮一号AI日报 | {today_str}"
