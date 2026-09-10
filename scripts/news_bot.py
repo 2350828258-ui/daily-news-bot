@@ -1,7 +1,8 @@
 """
 每日科技新闻推送机器人（大壮一号版本 - 飞书文档+按月归档版）
 
-通过公开 RSS 按自定义主题拉取资讯，创建飞书文档并按月归档，推送到群。
+通过公开 RSS 按自定义主题拉取资讯，使用 DeepSeek 生成摘要，创建飞书文档并按月归档，推送到群。
+支持同时向内部群（大壮一号）和外部群（大壮二号）推送。
 """
 from __future__ import annotations
 
@@ -51,11 +52,20 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+# ========== 内部群（大壮一号）配置 ==========
 FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "").strip().lstrip("\ufeff")
 FEISHU_SECRET = os.getenv("FEISHU_SECRET", "").strip().lstrip("\ufeff")
+
+# ========== 外部群（大壮二号）配置（可选） ==========
+DAZHUANG_2_WEBHOOK_URL = os.getenv("DAZHUANG_2_WEBHOOK_URL", "").strip().lstrip("\ufeff")
+DAZHUANG_2_SECRET = os.getenv("DAZHUANG_2_SECRET", "").strip().lstrip("\ufeff")
+
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "").strip()
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "").strip()
 FEISHU_ARCHIVE_FOLDER_TOKEN = os.getenv("FEISHU_ARCHIVE_FOLDER_TOKEN", "").strip()
+
+# ========== DeepSeek API Key ==========
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 KEYWORDS = ["大壮一号", "每日资讯"]
 
@@ -80,7 +90,6 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
 
-# 国内高质量科技媒体（前四个板块的第一优先级）
 FALLBACK_FEEDS = (
     "https://www.jiqizhixin.com/rss",
     "https://www.qbitai.com/feed",
@@ -93,20 +102,12 @@ FALLBACK_FEEDS = (
     "https://www.geekpark.net/rss",
 )
 
-# 全球高质量AIGC创作者社区（第五个板块专属，绝对不碰 Google News）
 CREATOR_FEEDS = (
-    # ===== 国外Reddit社区 =====
     "https://www.reddit.com/r/aivideo/.rss",
     "https://www.reddit.com/r/Midjourney/.rss",
     "https://www.reddit.com/r/StableDiffusion/.rss",
     "https://www.reddit.com/r/aiArt/.rss",
     "https://www.reddit.com/r/comfyui/.rss",
-    # ===== 国内B站AIGC UP主（把下面的 UP主UID 替换成你喜欢的UP主ID） =====
-    # 如何找UID：打开UP主主页，看浏览器地址栏 https://space.bilibili.com/12345678，那串数字就是UID
-    # 找到后把下面三行里的 "UP主UID" 替换成真实数字，并去掉行首的 # 注释符号即可启用
-    # "https://rsshub.app/bilibili/user/video/UP主UID_1",
-    # "https://rsshub.app/bilibili/user/video/UP主UID_2",
-    # "https://rsshub.app/bilibili/user/video/UP主UID_3",
 )
 
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
@@ -130,7 +131,6 @@ TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
     "行业动态与商业政策": (
         "AI融资", "AI政策", "AI监管", "AI芯片", "AI商业", "大模型商业", "人工智能行业", "AI战略"
     ),
-    # 因为第五板块已经取消了关键词过滤（keywords=None），这里的词仅作备用
     "优秀AIGC案例": (
         "AIGC", "AI视频", "AI绘画", "作品", "演示", "创意", "生成",
         "Midjourney", "Stable Diffusion", "Sora", "ComfyUI",
@@ -169,6 +169,10 @@ def validate_config() -> None:
         sys.exit(1)
     if not FEISHU_ARCHIVE_FOLDER_TOKEN:
         logger.warning("未配置 FEISHU_ARCHIVE_FOLDER_TOKEN，文档将创建在云空间根目录")
+    if not DAZHUANG_2_WEBHOOK_URL:
+        logger.info("未配置 DAZHUANG_2_WEBHOOK_URL，只推送内部群。")
+    if not DEEPSEEK_API_KEY:
+        logger.warning("未配置 DEEPSEEK_API_KEY，将不会生成 AI 摘要。")
 
 
 def parse_topics(raw: str | None) -> list[str]:
@@ -289,6 +293,7 @@ def _entry_to_item(entry: Any, default_source: str = "") -> dict[str, str]:
         "source": source or "未知来源",
         "url": getattr(entry, "link", "") or "",
         "snippet": snippet[:80],
+        "summary": "",
     }
 
 
@@ -351,21 +356,19 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     seen_titles: list[str] = []
     results: list[dict[str, str]] = []
 
-    # ========== 第五板块专属逻辑：单独设置为近7天，取消关键词门槛 ==========
     if topic == "优秀AIGC案例":
         logger.info("「%s」优先从全球AIGC创作者社区抓取（近7天，放宽过滤）...", topic)
         creator_items = _collect_from_feeds(
             _load_feeds(CREATOR_FEEDS),
-            keywords=None,   # 取消关键词过滤，依靠社区本身质量和黑名单防垃圾
+            keywords=None,
             count=count,
             seen_titles=seen_titles,
-            days=7           # 单独放宽到7天
+            days=7
         )
         results.extend(creator_items)
         logger.info("创作者社区抓到 %d 条", len(results))
         return results[:count]
 
-    # ========== 前四个板块：严格近2天，国内媒体优先 ==========
     logger.info("「%s」优先从国内高质量科技媒体抓取（近2天）...", topic)
     domestic_news = _collect_from_feeds(
         _load_feeds(FALLBACK_FEEDS),
@@ -401,28 +404,85 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     return results[:count]
 
 
+def _generate_summary(title: str, snippet: str = "") -> str:
+    """调用 DeepSeek 为单条新闻生成一句话摘要。"""
+    if not DEEPSEEK_API_KEY:
+        return ""
+
+    prompt = f"请用一句简洁的中文概括以下新闻的核心内容，不超过50字：\n标题：{title}\n摘要：{snippet}"
+    try:
+        resp = requests.post(
+            "https://api.deepseek.com/chat/completions",
+            headers={
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "deepseek-v4-flash",
+                "messages": [
+                    {"role": "system", "content": "你是一个专业的AI新闻编辑，擅长用一句话概括新闻要点。"},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 80,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        summary = data["choices"][0]["message"]["content"].strip()
+        return summary
+    except Exception as e:
+        logger.warning("生成摘要失败: %s", e)
+        return ""
+
+
+def _enrich_news_with_summaries(sections: list[tuple[str, list[dict[str, str]]]]) -> None:
+    """为所有板块的新闻批量生成摘要（原地修改）。"""
+    if not DEEPSEEK_API_KEY:
+        return
+
+    for topic, news in sections:
+        for item in news:
+            if item.get("summary"):
+                continue
+            summary = _generate_summary(item["title"], item.get("snippet", ""))
+            if summary:
+                item["summary"] = summary
+                logger.info("已生成摘要: %s -> %s", item["title"][:30], summary[:30])
+            time.sleep(0.5)  # 避免触发 DeepSeek 速率限制
+
+
 def generate_sign(secret: str, timestamp: str) -> str:
     key = f"{timestamp}\n{secret}"
     return base64.b64encode(hmac.new(key.encode(), b"", hashlib.sha256).digest()).decode("utf-8")
 
 
-def send_with_sign(content: str) -> dict[str, Any]:
+def _send_to_single_webhook(webhook_url: str, secret: str, content: str) -> dict[str, Any]:
     try:
         timestamp = str(int(time.time()))
-        sign = generate_sign(FEISHU_SECRET, timestamp)
+        sign = generate_sign(secret, timestamp)
         payload = {
             "timestamp": timestamp,
             "sign": sign,
             "msg_type": "text",
             "content": {"text": content},
         }
-        response = requests.post(FEISHU_WEBHOOK_URL, json=payload, timeout=REQUEST_TIMEOUT)
+        response = requests.post(webhook_url, json=payload, timeout=REQUEST_TIMEOUT)
         result = response.json()
-        logger.info("飞书响应: %s", result)
+        logger.info("飞书响应 [%s...]: %s", webhook_url[:40], result)
         return result
     except Exception as e:
-        logger.error("发送失败: %s", e)
+        logger.error("发送失败 [%s...]: %s", webhook_url[:40], e)
         return {"code": -1, "msg": str(e)}
+
+
+def send_with_sign(content: str) -> dict[str, Any]:
+    result = _send_to_single_webhook(FEISHU_WEBHOOK_URL, FEISHU_SECRET, content)
+    if DAZHUANG_2_WEBHOOK_URL:
+        external_secret = DAZHUANG_2_SECRET or FEISHU_SECRET
+        _send_to_single_webhook(DAZHUANG_2_WEBHOOK_URL, external_secret, content)
+    return result
 
 
 def _get_tenant_access_token() -> str:
@@ -482,10 +542,13 @@ def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[
         if news:
             for i, item in enumerate(news, start=1):
                 title = item["title"].replace("【", "").replace("】", "").strip()
+                summary = item.get("summary", "").strip()
                 url = (item.get("url") or "").strip()
                 line = f"{i}）{title}"
+                if summary:
+                    line += f"\n    📝 {summary}"
                 if url:
-                    line += f" 🔗 {url}"
+                    line += f"\n    🔗 {url}"
                 blocks.append(_text_block(line))
         else:
             blocks.append(_text_block(f"大壮一号我扒拉了一圈，这两天「{topic}」连个影子都没有，估计大佬们都在憋大招呢，咱们先翻篇看看别的！😜"))
@@ -576,6 +639,12 @@ def job_news_push(topics: list[str]) -> int:
         if not news:
             logger.info("「%s」近2天内没有相关新闻，大壮一号将在文档中吐槽后跳过。", topic)
 
+    # ========== 为所有新闻生成 AI 摘要 ==========
+    if DEEPSEEK_API_KEY:
+        logger.info("开始为新闻生成 AI 摘要...")
+        _enrich_news_with_summaries(sections)
+    # ==========================================
+
     today_str = datetime.now().strftime("%Y-%m-%d")
     doc_title = f"大壮一号AI日报 | {today_str}"
     try:
@@ -585,7 +654,6 @@ def job_news_push(topics: list[str]) -> int:
         logger.error("创建飞书文档失败: %s", e)
         return 1
 
-    # 飞书推送消息加上日期
     today_display = datetime.now().strftime("%Y年%m月%d日")
     message = f"🔔 大壮一号播报 | {today_display}\n大壮家族的朋友们，今日AI日报已生成，请查收：\n{doc_url}"
 
