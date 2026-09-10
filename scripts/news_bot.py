@@ -1,5 +1,5 @@
 """
-每日科技新闻推送机器人
+每日科技新闻推送机器人（大壮一号版本）
 
 通过公开 RSS 按自定义主题拉取资讯，签名后推送到飞书群。
 用法:
@@ -58,9 +58,17 @@ _load_dotenv()
 FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "").strip().lstrip("\ufeff")
 FEISHU_SECRET = os.getenv("FEISHU_SECRET", "").strip().lstrip("\ufeff")
 
-KEYWORDS = ["小可每日资讯", "自动驾驶推送"]
+# 飞书自定义机器人的关键词校验（如果后台开启了关键词，必须包含以下词汇之一）
+KEYWORDS = ["大壮一号", "每日资讯"]
 
-DEFAULT_TOPICS = ("AI大模型", "具身智能", "每日财经热点")
+# 默认主题（更改为你需要的五个领域）
+DEFAULT_TOPICS = (
+    "大模型与基础技术",
+    "AIGC工具与多模态",
+    "AI智能体与行业落地",
+    "行业动态与商业政策",
+    "优秀AI视频案例与创作者生态"
+)
 MIN_TOPICS = 1
 MAX_TOPICS = 5
 
@@ -85,10 +93,7 @@ PUSH_MINUTE = _env_int("PUSH_MINUTE", DEFAULT_PUSH_MINUTE)
 if not (0 <= PUSH_HOUR <= 23 and 0 <= PUSH_MINUTE <= 59):
     logger.warning(
         "PUSH_HOUR/PUSH_MINUTE 超出范围 (%d:%02d)，回退到 %d:%02d",
-        PUSH_HOUR,
-        PUSH_MINUTE,
-        DEFAULT_PUSH_HOUR,
-        DEFAULT_PUSH_MINUTE,
+        PUSH_HOUR, PUSH_MINUTE, DEFAULT_PUSH_HOUR, DEFAULT_PUSH_MINUTE
     )
     PUSH_HOUR = DEFAULT_PUSH_HOUR
     PUSH_MINUTE = DEFAULT_PUSH_MINUTE
@@ -110,7 +115,7 @@ FALLBACK_FEEDS = (
 
 # 特定主题优先源（专业站点 RSS，避免 Google 泛搜出地方杂讯）
 TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
-    "每日财经热点": (
+    "行业动态与商业政策": (
         "https://rss.huxiu.com/",
         "https://36kr.com/feed",
     ),
@@ -118,68 +123,29 @@ TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
 
 # Google News 检索词（不填则直接用主题名）
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
-    "每日财经热点": (
-        "虎嗅 OR 华尔街见闻 OR 财联社 OR 第一财经 OR 界面新闻 OR 经济观察报"
-    ),
-    "具身智能": "具身智能 OR 人形机器人 OR 优必选 OR 智元 OR 宇树",
-    "AI大模型": "AI大模型 OR 大模型 OR DeepSeek OR OpenAI OR Kimi",
+    "大模型与基础技术": "大模型 OR OpenAI OR Google OR Anthropic OR DeepSeek OR 开源大模型",
+    "AIGC工具与多模态": "AIGC OR Sora OR 可灵 OR Midjourney OR Stable Diffusion OR 视频生成",
+    "AI智能体与行业落地": "AI Agent OR 智能体 OR 具身智能 OR 人形机器人 OR 自动化工作流",
+    "行业动态与商业政策": "AI 融资 OR AI 政策 OR AI 监管 OR 科技行业动态",
+    "优秀AI视频案例与创作者生态": "AI视频 OR 爆款短片 OR 创作者生态 OR 获奖AI电影 OR ComfyUI",
 }
 
 # 主题同义词：国内综合源标题很少出现完整主题词，需放宽过滤
 TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
-    "AI大模型": (
-        "AI大模型",
-        "大模型",
-        "人工智能",
-        "生成式",
-        "ChatGPT",
-        "OpenAI",
-        "Claude",
-        "Gemini",
-        "Kimi",
-        "DeepSeek",
-        "通义",
-        "文心",
-        "智谱",
-        "Grok",
-        "LLM",
-        "AIGC",
+    "大模型与基础技术": (
+        "大模型", "AI大模型", "OpenAI", "Google", "Anthropic", "DeepSeek", "开源", "Llama", "Claude", "Gemini"
     ),
-    "具身智能": (
-        "具身智能",
-        "人形机器人",
-        "具身",
-        "灵巧手",
-        "四足机器人",
-        "工业机器人",
-        "Figure",
-        "优必选",
-        "智元",
-        "宇树",
-        "Tesla Bot",
-        "Optimus",
-        "机器人公司",
+    "AIGC工具与多模态": (
+        "AIGC", "Sora", "可灵", "即梦", "Midjourney", "Flux", "Stable Diffusion", "视频生成", "图像生成", "多模态"
     ),
-    "每日财经热点": (
-        "每日财经热点",
-        "财经",
-        "商业",
-        "消费",
-        "融资",
-        "IPO",
-        "财报",
-        "股市",
-        "A股",
-        "港股",
-        "美股",
-        "央行",
-        "美联储",
-        "降息",
-        "加息",
-        "通胀",
-        "虎嗅",
-        "华尔街见闻",
-        "财联社",
+    "AI智能体与行业落地": (
+        "AI Agent", "智能体", "具身智能", "人形机器人", "自动化工作流", "落地", "应用", "宇树", "Figure"
+    ),
+    "行业动态与商业政策": (
+        "融资", "并购", "IPO", "财报", "政策", "监管", "法规", "商业动态", "合作", "市场"
+    ),
+    "优秀AI视频案例与创作者生态": (
+        "AI视频", "爆款", "短片", "案例", "创作者", "获奖", "拆解", "教程", "ComfyUI", "Sign"
     ),
 }
 
@@ -223,10 +189,7 @@ def parse_topics(raw: str | None) -> list[str]:
     if not (MIN_TOPICS <= len(topics) <= MAX_TOPICS):
         logger.error(
             "主题数量须为 %d–%d 个（英文逗号分隔），当前解析到 %d 个: %s",
-            MIN_TOPICS,
-            MAX_TOPICS,
-            len(topics),
-            topics or "(空)",
+            MIN_TOPICS, MAX_TOPICS, len(topics), topics or "(空)"
         )
         sys.exit(1)
     return topics
@@ -239,7 +202,6 @@ def topic_keywords(topic: str) -> tuple[str, ...]:
     if topic not in keywords:
         keywords.insert(0, topic)
     keywords.extend(TOPIC_SYNONYMS.get(topic, ()))
-    # 去重保序
     seen: set[str] = set()
     unique: list[str] = []
     for kw in keywords:
@@ -269,10 +231,8 @@ def strip_html(text: str) -> str:
 
 
 def clean_snippet(snippet: str) -> str:
-    """清理摘要：去掉发布时间、阅读量、来源标签等冗余信息。"""
     if not snippet:
         return ""
-
     replacements = [
         (r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日]?", " "),
         (r"\d{1,2}:\d{2}(:\d{2})?", " "),
@@ -287,7 +247,6 @@ def clean_snippet(snippet: str) -> str:
     ]
     for pattern, replacement in replacements:
         snippet = re.sub(pattern, replacement, snippet)
-
     snippet = re.sub(r"[。，；：、,\.;:\s]+", " ", snippet).strip()
     if len(snippet) > 55:
         snippet = snippet[:52] + "..."
@@ -309,11 +268,7 @@ def _fetch_feed(url: str, retries: int = FETCH_RETRIES) -> Any | None:
             response.raise_for_status()
             feed = feedparser.parse(response.content)
             if getattr(feed, "bozo", False) and not feed.entries:
-                logger.warning(
-                    "RSS 解析异常 [%s]: %s",
-                    url,
-                    getattr(feed, "bozo_exception", ""),
-                )
+                logger.warning("RSS 解析异常 [%s]: %s", url, getattr(feed, "bozo_exception", ""))
                 return None
             return feed
         except Exception as e:
@@ -332,9 +287,7 @@ def _entry_to_item(entry: Any, default_source: str = "") -> dict[str, str]:
         source = entry.source.title
     elif getattr(entry, "author", None):
         source = str(entry.author)
-    snippet = strip_html(
-        getattr(entry, "summary", "") or getattr(entry, "description", "") or ""
-    )
+    snippet = strip_html(getattr(entry, "summary", "") or getattr(entry, "description", "") or "")
     return {
         "title": title,
         "source": source or "未知来源",
@@ -352,17 +305,7 @@ def _match_keywords(text: str, keywords: tuple[str, ...]) -> bool:
 
 
 _fallback_feed_cache: dict[str, Any | None] = {}
-
-# Google / 杂讯标题黑名单（地方站、个人页等）
-_TITLE_BLOCKLIST = (
-    "个人中心",
-    "的个人主页",
-    "登录",
-    "注册",
-    "甘肃日报",
-    "兰州晚报",
-    "新甘肃",
-)
+_TITLE_BLOCKLIST = ("个人中心", "的个人主页", "登录", "注册", "甘肃日报", "兰州晚报", "新甘肃")
 
 
 def _is_junk_item(item: dict[str, str]) -> bool:
@@ -371,7 +314,6 @@ def _is_junk_item(item: dict[str, str]) -> bool:
 
 
 def _load_feeds(urls: tuple[str, ...]) -> list[tuple[str, Any]]:
-    """按 URL 列表加载 RSS，同一次任务内复用缓存。"""
     loaded: list[tuple[str, Any]] = []
     for feed_url in urls:
         if feed_url not in _fallback_feed_cache:
@@ -382,14 +324,7 @@ def _load_feeds(urls: tuple[str, ...]) -> list[tuple[str, Any]]:
     return loaded
 
 
-def _collect_from_feeds(
-    feed_pairs: list[tuple[str, Any]],
-    *,
-    keywords: tuple[str, ...] | None,
-    count: int,
-    seen_titles: set[str],
-) -> list[dict[str, str]]:
-    """从已加载 feed 收集条目；keywords 为 None 时不过滤。"""
+def _collect_from_feeds(feed_pairs, *, keywords, count, seen_titles):
     results: list[dict[str, str]] = []
     for feed_url, feed in feed_pairs:
         feed_title = getattr(feed.feed, "title", "") or feed_url
@@ -412,32 +347,19 @@ def _collect_from_feeds(
 
 
 def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, str]]:
-    """按主题拉新闻：专业源优先，再 Google，最后通用国内 RSS。"""
     keywords = topic_keywords(topic)
     seen_titles: set[str] = set()
     results: list[dict[str, str]] = []
 
-    # 1) 主题专属专业源（如财经 → 虎嗅）
     primary_urls = TOPIC_PRIMARY_FEEDS.get(topic)
     if primary_urls:
-        # 虎嗅等专业源本身即垂类，不再强制关键词，避免误杀
         primary_items = _collect_from_feeds(
-            _load_feeds(primary_urls),
-            keywords=None,
-            count=count,
-            seen_titles=seen_titles,
+            _load_feeds(primary_urls), keywords=None, count=count, seen_titles=seen_titles
         )
         results.extend(primary_items)
         if len(results) >= count:
-            logger.info("「%s」经专业源获取到 %d 条", topic, len(results))
             return results[:count]
-        logger.info(
-            "「%s」专业源仅 %d 条，继续补充其他来源",
-            topic,
-            len(results),
-        )
 
-    # 2) Google News（可用主题定制检索词，避免泛搜出地方杂讯）
     query = TOPIC_SEARCH_QUERIES.get(topic, topic)
     google_url = google_news_rss_url(query)
     feed = _fetch_feed(google_url, retries=1)
@@ -454,12 +376,8 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
             if len(results) >= count:
                 break
         if len(results) >= count:
-            logger.info("「%s」经 Google News 获取到 %d 条", topic, len(results))
             return results[:count]
 
-    logger.info("「%s」改用国内通用 RSS 回退补充", topic)
-
-    # 3) 通用国内 RSS + 同义词过滤
     more = _collect_from_feeds(
         _load_feeds(FALLBACK_FEEDS),
         keywords=keywords,
@@ -467,20 +385,15 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
         seen_titles=seen_titles,
     )
     results.extend(more)
-    logger.info("「%s」获取到 %d 条新闻", topic, len(results))
     return results[:count]
 
 
 def generate_sign(secret: str, timestamp: str) -> str:
-    """生成飞书签名。"""
     key = f"{timestamp}\n{secret}"
-    return base64.b64encode(
-        hmac.new(key.encode(), b"", hashlib.sha256).digest()
-    ).decode("utf-8")
+    return base64.b64encode(hmac.new(key.encode(), b"", hashlib.sha256).digest()).decode("utf-8")
 
 
 def send_with_sign(content: str) -> dict[str, Any]:
-    """使用签名校验发送消息到飞书（timestamp/sign 放入请求体）。"""
     try:
         timestamp = str(int(time.time()))
         sign = generate_sign(FEISHU_SECRET, timestamp)
@@ -490,11 +403,7 @@ def send_with_sign(content: str) -> dict[str, Any]:
             "msg_type": "text",
             "content": {"text": content},
         }
-        response = requests.post(
-            FEISHU_WEBHOOK_URL,
-            json=payload,
-            timeout=REQUEST_TIMEOUT,
-        )
+        response = requests.post(FEISHU_WEBHOOK_URL, json=payload, timeout=REQUEST_TIMEOUT)
         result = response.json()
         logger.info("飞书响应: %s", result)
         return result
@@ -504,13 +413,7 @@ def send_with_sign(content: str) -> dict[str, Any]:
 
 
 def _format_item_line(item: dict[str, str], index: int) -> str:
-    """格式化为「1）标题 [来源] 🔗 链接」。"""
-    title = (
-        item["title"]
-        .replace("【", "")
-        .replace("】", "")
-        .strip()
-    )
+    title = item["title"].replace("【", "").replace("】", "").strip()
     title = re.sub(r"\s*[-|｜]\s*[^\s\-｜]{1,24}$", "", title).strip() or item["title"].strip()
     url = (item.get("url") or "").strip()
     source = (item.get("source") or "").strip()
@@ -533,13 +436,16 @@ def _format_item_line(item: dict[str, str], index: int) -> str:
 
 
 def format_news_content(sections: list[tuple[str, list[dict[str, str]]]]) -> str:
-    """按主题列表格式化新闻内容（各板块 1）2）3）分点）。"""
+    """按主题列表格式化新闻内容（大壮一号幽默风格）"""
     today = datetime.now().strftime("%Y 年 %m 月 %d 日")
-    topic_labels = [topic for topic, _ in sections]
-    header_topics = " & ".join(topic_labels)
+    
+    # 大壮一号的幽默开场白
     lines = [
-        f"🔔 小可每日资讯 | {header_topics}",
+        f"🔔 大壮一号 | 前沿AI情报",
         f"📅 {today}",
+        "",
+        "大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！",
+        "别人都在愁没方向，大壮一号给你们把AI最前沿的情报都端上来啦！赶紧搬好小板凳，听我给你唠唠今天的硬核干货！",
     ]
 
     for topic, news in sections:
@@ -548,21 +454,16 @@ def format_news_content(sections: list[tuple[str, list[dict[str, str]]]]) -> str
             for i, item in enumerate(news, start=1):
                 lines.append(_format_item_line(item, i))
         else:
-            lines.append("暂无最新资讯")
+            lines.append("今天这板块兄弟们没整出啥大动静，让大壮一号再去打探打探～")
 
-    lines.extend(
-        [
-            "",
-            "✨ 每日积累，稳步精进～",
-        ]
-    )
-    # 确保关键词出现在消息中（飞书自定义机器人关键词校验）
-    _ = KEYWORDS
+    lines.extend([
+        "",
+        "好啦，今天的吹牛就到这里！大壮一号祝各位大壮家族的朋友们，新的一天吃嘛嘛香，做视频不卡顿！咱们明天不见不散！😎✨",
+    ])
     return "\n".join(lines)
 
 
 def job_news_push(topics: list[str]) -> int:
-    """执行一次新闻推送。成功返回 0，失败返回非 0。"""
     _fallback_feed_cache.clear()
     logger.info("=" * 50)
     logger.info("开始执行新闻推送任务...")
@@ -587,16 +488,13 @@ def job_news_push(topics: list[str]) -> int:
 
     if result.get("code") == 0:
         logger.info("✅ 推送成功！")
-        logger.info("=" * 50)
         return 0
 
     logger.error("❌ 推送失败: %s", result.get("msg"))
-    logger.info("=" * 50)
     return 1
 
 
 def run_schedule(topics: list[str]) -> None:
-    """长驻：每天按 PUSH_HOUR:PUSH_MINUTE（北京时间）推送。"""
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
 
@@ -604,7 +502,6 @@ def run_schedule(topics: list[str]) -> None:
     push_label = f"{PUSH_HOUR:02d}:{PUSH_MINUTE:02d}"
     logger.info("🚀 每日新闻推送机器人启动（定时模式）")
     logger.info("Webhook: %s...", webhook_preview)
-    logger.info("签名校验: 已启用")
     logger.info("关键词: %s", KEYWORDS)
     logger.info("主题: %s", ", ".join(topics))
 
@@ -629,28 +526,9 @@ def run_schedule(topics: list[str]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="每日科技新闻推送机器人")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--once",
-        action="store_true",
-        help="推送一次后退出（默认，适合 Cron / GitHub Actions）",
-    )
-    mode.add_argument(
-        "--schedule",
-        action="store_true",
-        help=(
-            f"长驻定时：每天北京时间 {PUSH_HOUR:02d}:{PUSH_MINUTE:02d} 推送"
-            "（可由 .env 的 PUSH_HOUR/PUSH_MINUTE 配置）"
-        ),
-    )
-    parser.add_argument(
-        "--topics",
-        type=str,
-        default=None,
-        help=(
-            f'推送主题，英文逗号分隔，{MIN_TOPICS}–{MAX_TOPICS} 个；'
-            f'优先 CLI，否则读环境变量 TOPICS，默认 "{",".join(DEFAULT_TOPICS)}"'
-        ),
-    )
+    mode.add_argument("--once", action="store_true", help="推送一次后退出（默认，适合 Cron / GitHub Actions）")
+    mode.add_argument("--schedule", action="store_true", help=f"长驻定时：每天北京时间 {PUSH_HOUR:02d}:{PUSH_MINUTE:02d} 推送")
+    parser.add_argument("--topics", type=str, default=None, help=f'推送主题，英文逗号分隔')
     return parser.parse_args()
 
 
@@ -663,7 +541,6 @@ def main() -> None:
         run_schedule(topics)
         return
 
-    # 默认与 --once：推送一次后退出
     exit_code = job_news_push(topics)
     sys.exit(exit_code)
 
