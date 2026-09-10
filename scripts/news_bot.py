@@ -71,7 +71,7 @@ MAX_TOPICS = 5
 DEFAULT_PUSH_HOUR = 7
 DEFAULT_PUSH_MINUTE = 30
 
-RSS_COUNT = 7
+RSS_COUNT = 10
 REQUEST_TIMEOUT = 15
 FETCH_RETRIES = 2
 USER_AGENT = (
@@ -80,15 +80,26 @@ USER_AGENT = (
 )
 
 FALLBACK_FEEDS = (
+    # 综合科技
     "https://www.ithome.com/rss/",
     "https://36kr.com/feed",
     "https://www.solidot.org/index.rss",
+    # AI垂直媒体
     "https://www.jiqizhixin.com/rss",
     "https://www.qbitai.com/feed",
     "https://www.infoq.cn/feed",
     "https://www.leiphone.com/feed",
     "https://www.pingwest.com/feed",
     "https://rss.huxiu.com/",
+    "https://www.tmtpost.com/feed",
+    "https://www.geekpark.net/rss",
+    # 全球高质量创作者社区（涵盖视频、绘画、艺术作品）
+    "https://www.reddit.com/r/aivideo/.rss",
+    "https://www.reddit.com/r/comfyui/.rss",
+    "https://www.reddit.com/r/Midjourney/.rss",
+    "https://www.reddit.com/r/StableDiffusion/.rss",
+    "https://www.reddit.com/r/aiArt/.rss",
+    "https://www.reddit.com/r/artificial/.rss",
 )
 
 TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
@@ -96,14 +107,23 @@ TOPIC_PRIMARY_FEEDS: dict[str, tuple[str, ...]] = {
         "https://rss.huxiu.com/",
         "https://36kr.com/feed",
     ),
+    # 这个板块专属：优先从全球创作者社区抓取
+    "优秀AI视频案例与创作者生态": (
+        "https://www.reddit.com/r/aivideo/.rss",
+        "https://www.reddit.com/r/comfyui/.rss",
+        "https://www.reddit.com/r/Midjourney/.rss",
+        "https://www.reddit.com/r/StableDiffusion/.rss",
+        "https://www.reddit.com/r/aiArt/.rss",
+    ),
 }
 
 TOPIC_SEARCH_QUERIES: dict[str, str] = {
-    "大模型与基础技术": "大模型 OR OpenAI OR Google OR Anthropic OR DeepSeek OR 开源大模型",
-    "AIGC工具与多模态": "AIGC OR Sora OR 可灵 OR Midjourney OR Stable Diffusion OR 视频生成",
+    "大模型与基础技术": "AI大模型 OR OpenAI OR Google OR Anthropic OR DeepSeek OR 大模型",
+    "AIGC工具与多模态": "AIGC OR Sora OR 可灵 OR Midjourney OR Stable Diffusion OR AI视频 OR AI绘画",
     "AI智能体与行业落地": "AI Agent OR 智能体 OR 具身智能 OR 人形机器人 OR 自动化工作流",
-    "行业动态与商业政策": "AI 融资 OR AI 政策 OR AI 监管 OR 科技行业动态",
-    "优秀AI视频案例与创作者生态": "AI视频 OR 爆款短片 OR 创作者生态 OR 获奖AI电影 OR ComfyUI",
+    "行业动态与商业政策": "AI 融资 OR AI 政策 OR AI 监管 OR 科技行业动态 OR AI芯片",
+    # 扩宽到图画、插画、艺术、短片，同时保留高门槛词汇过滤低质内容
+    "优秀AI视频案例与创作者生态": "AI短片 获奖 OR AI电影节 OR AI绘画 作品 OR Midjourney 艺术 OR Stable Diffusion 插画 OR 创作者 分享",
 }
 
 TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
@@ -119,8 +139,9 @@ TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
     "行业动态与商业政策": (
         "融资", "并购", "IPO", "财报", "政策", "监管", "法规", "商业动态", "合作", "市场"
     ),
+    # 这里的过滤词也扩展到了图画、插画、艺术
     "优秀AI视频案例与创作者生态": (
-        "AI视频", "爆款", "短片", "案例", "创作者", "获奖", "拆解", "教程", "ComfyUI", "Sign"
+        "AI短片", "获奖", "电影节", "AI绘画", "插画", "艺术作品", "Midjourney", "Stable Diffusion", "创作者", "ComfyUI", "Runway", "Sora"
     ),
 }
 
@@ -262,7 +283,13 @@ def _match_keywords(text: str, keywords: tuple[str, ...]) -> bool:
 
 
 _fallback_feed_cache: dict[str, Any | None] = {}
-_TITLE_BLOCKLIST = ("个人中心", "的个人主页", "登录", "注册", "甘肃日报", "兰州晚报", "新甘肃")
+# 黑名单：彻底封杀短视频营销号、广告、培训、引流
+_TITLE_BLOCKLIST = (
+    "个人中心", "的个人主页", "登录", "注册", "甘肃日报", "兰州晚报", "新甘肃",
+    "广告", "抽奖", "免费领取", "点击购买", "优惠", "招商", "代理", "兼职",
+    "月入", "震惊", "速看", "删前", "福利", "下载", "安装", "扫码", "加群",
+    "培训", "变现", "副业", "带你", "零基础", "小白", "干货", "速成", "引流",
+)
 
 
 def _is_junk_item(item: dict[str, str]) -> bool:
@@ -382,10 +409,6 @@ def _get_tenant_access_token() -> str:
 
 
 def _get_or_create_monthly_folder(token: str, headers: dict) -> str:
-    """
-    在归档根文件夹下获取或创建当月的子文件夹。
-    返回该子文件夹的 token（folder_token），失败时返回空字符串。
-    """
     if not FEISHU_ARCHIVE_FOLDER_TOKEN:
         return ""
 
@@ -393,21 +416,18 @@ def _get_or_create_monthly_folder(token: str, headers: dict) -> str:
     logger.info("检查归档文件夹: %s", current_month)
 
     try:
-        # 1. 列出根文件夹下的文件
         list_url = "https://open.feishu.cn/open-apis/drive/v1/files"
         params = {"folder_token": FEISHU_ARCHIVE_FOLDER_TOKEN, "page_size": 200}
         resp = requests.get(list_url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         files = resp.json().get("data", {}).get("files", [])
 
-        # 2. 查找是否已存在当月文件夹
         for f in files:
             if f.get("type") == "folder" and f.get("name") == current_month:
                 folder_token = f.get("token")
                 logger.info("✅ 已找到当月归档文件夹: %s (token: %s)", current_month, folder_token)
                 return folder_token
 
-        # 3. 不存在则创建
         create_folder_url = "https://open.feishu.cn/open-apis/drive/v1/files/create_folder"
         payload = {"name": current_month, "folder_token": FEISHU_ARCHIVE_FOLDER_TOKEN}
         resp = requests.post(create_folder_url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
@@ -469,11 +489,8 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
         "Content-Type": "application/json; charset=utf-8",
     }
 
-    # ========== 获取或创建当月归档文件夹 ==========
     monthly_folder_token = _get_or_create_monthly_folder(token, headers)
-    # ===============================================
 
-    # 1. 创建文档（如果拿到了月份文件夹 token，就放进去）
     create_url = "https://open.feishu.cn/open-apis/docx/v1/documents"
     payload = {"title": title}
     if monthly_folder_token:
@@ -486,20 +503,17 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
     if not document_id:
         raise RuntimeError(f"创建文档失败: {resp.text}")
 
-    # 2. 获取根 block
     doc_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}"
     resp = requests.get(doc_url, headers=headers, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     root_block_id = resp.json().get("data", {}).get("document", {}).get("document_id")
 
-    # 3. 写入内容
     blocks = _build_doc_blocks(sections)
     write_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}/blocks/{root_block_id}/children"
     write_payload = {"children": blocks, "index": 0}
     resp = requests.post(write_url, headers=headers, json=write_payload, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
 
-    # 4. 修改文档权限，让组织内成员可阅读
     try:
         perm_url = f"https://open.feishu.cn/open-apis/drive/v1/permissions/{document_id}/public?type=docx"
         perm_payload = {"link_share_entity": "tenant_readable"}
