@@ -30,6 +30,7 @@ jobs:
           FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_ARCHIVE_FOLDER_TOKEN: ${{ secrets.FEISHU_ARCHIVE_FOLDER_TOKEN }}
           TOPICS: "大模型与基础技术,AIGC工具与多模态,AI智能体与行业落地,行业动态与商业政策,优秀AI视频案例与创作者生态"
         run: |
           python scripts/news_bot.py --once --topics "大模型与基础技术,AIGC工具与多模态,AI智能体与行业落地,行业动态与商业政策,优秀AI视频案例与创作者生态"
