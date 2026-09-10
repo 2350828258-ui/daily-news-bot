@@ -1,7 +1,8 @@
 """
 每日科技新闻推送机器人（大壮一号版本 - 飞书文档+按月归档版）
 
-通过公开 RSS 按自定义主题拉取资讯，使用 DeepSeek 生成摘要，创建飞书文档并按月归档，推送到群。
+通过公开 RSS 按自定义主题拉取资讯，使用 DeepSeek 生成全局大总结，
+创建飞书文档并按月归档，并在群消息中直接播报总结，推送到群。
 支持同时向内部群（大壮一号）和外部群（大壮二号）推送。
 """
 from __future__ import annotations
@@ -172,7 +173,7 @@ def validate_config() -> None:
     if not DAZHUANG_2_WEBHOOK_URL:
         logger.info("未配置 DAZHUANG_2_WEBHOOK_URL，只推送内部群。")
     if not DEEPSEEK_API_KEY:
-        logger.warning("未配置 DEEPSEEK_API_KEY，将不会生成 AI 摘要。")
+        logger.warning("未配置 DEEPSEEK_API_KEY，将不会生成 AI 全局总结。")
 
 
 def parse_topics(raw: str | None) -> list[str]:
@@ -293,7 +294,6 @@ def _entry_to_item(entry: Any, default_source: str = "") -> dict[str, str]:
         "source": source or "未知来源",
         "url": getattr(entry, "link", "") or "",
         "snippet": snippet[:80],
-        "summary": "",
     }
 
 
@@ -404,12 +404,26 @@ def search_news_by_topic(topic: str, count: int = RSS_COUNT) -> list[dict[str, s
     return results[:count]
 
 
-def _generate_summary(title: str, snippet: str = "") -> str:
-    """调用 DeepSeek 为单条新闻生成一句话摘要。"""
+def _generate_daily_summary(sections: list[tuple[str, list[dict[str, str]]]]) -> str:
+    """将所有新闻发送给 DeepSeek，生成一段不超过 100 字的全局总结。"""
     if not DEEPSEEK_API_KEY:
         return ""
 
-    prompt = f"请用一句简洁的中文概括以下新闻的核心内容，不超过50字：\n标题：{title}\n摘要：{snippet}"
+    news_text_list = []
+    for topic, news in sections:
+        for item in news:
+            news_text_list.append(f"【{topic}】{item['title']} - {item.get('snippet', '')}")
+
+    if not news_text_list:
+        return ""
+
+    all_news = "\n".join(news_text_list)
+    prompt = (
+        "请阅读以下今日 AI 行业新闻资讯，用一段不超过 100 字的话进行全局总结，"
+        "高度概括今天AI领域的核心动态和趋势，不要分点，直接写一段话：\n\n"
+        f"{all_news}"
+    )
+
     try:
         resp = requests.post(
             "https://api.deepseek.com/chat/completions",
@@ -418,40 +432,24 @@ def _generate_summary(title: str, snippet: str = "") -> str:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "deepseek-chat",
+                "model": "deepseek-flash",  # 官方最新标准模型名
                 "messages": [
-                    {"role": "system", "content": "你是一个专业的AI新闻编辑，擅长用一句话概括新闻要点。"},
+                    {"role": "system", "content": "你是一个专业的AI行业分析师，擅长提炼核心趋势。"},
                     {"role": "user", "content": prompt},
                 ],
-                "temperature": 0.3,
-                "max_tokens": 80,
+                "temperature": 0.5,
+                "max_tokens": 150,
             },
             timeout=30,
         )
         resp.raise_for_status()
-        logger.info("DeepSeek 原始响应: %s", resp.text)
         data = resp.json()
         summary = data["choices"][0]["message"]["content"].strip()
+        logger.info("全局总结生成成功: %s", summary)
         return summary
     except Exception as e:
-        logger.warning("生成摘要失败: %s", e)
+        logger.warning("生成全局总结失败: %s", e)
         return ""
-
-
-def _enrich_news_with_summaries(sections: list[tuple[str, list[dict[str, str]]]]) -> None:
-    """为所有板块的新闻批量生成摘要（原地修改）。"""
-    if not DEEPSEEK_API_KEY:
-        return
-
-    for topic, news in sections:
-        for item in news:
-            if item.get("summary"):
-                continue
-            summary = _generate_summary(item["title"], item.get("snippet", ""))
-            if summary:
-                item["summary"] = summary
-                logger.info("已生成摘要: %s -> %s", item["title"][:30], summary[:30])
-            time.sleep(0.5)  # 避免触发 DeepSeek 速率限制
 
 
 def generate_sign(secret: str, timestamp: str) -> str:
@@ -531,23 +529,24 @@ def _get_or_create_monthly_folder(token: str, headers: dict) -> str:
         return ""
 
 
-def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]]) -> list[dict]:
+def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]], daily_summary: str = "") -> list[dict]:
     today = datetime.now().strftime("%Y年%m月%d日")
     blocks = []
 
     blocks.append(_text_block("大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！"))
     blocks.append(_text_block(f"今天是{today}，大壮一号给你们把近2天的AI前沿情报都端上来啦！"))
 
+    # 插入全局总结
+    if daily_summary:
+        blocks.append(_text_block(f"🧠 【今日AI大事件总结】\n{daily_summary}", bold=True))
+
     for topic, news in sections:
         blocks.append(_text_block(f"📌 {topic}", bold=True))
         if news:
             for i, item in enumerate(news, start=1):
                 title = item["title"].replace("【", "").replace("】", "").strip()
-                summary = item.get("summary", "").strip()
                 url = (item.get("url") or "").strip()
                 line = f"{i}）{title}"
-                if summary:
-                    line += f"\n    📝 {summary}"
                 if url:
                     line += f"\n    🔗 {url}"
                 blocks.append(_text_block(line))
@@ -577,7 +576,7 @@ def _text_block(text: str, bold: bool = False) -> dict:
     }
 
 
-def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, str]]]]) -> str:
+def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, str]]]], daily_summary: str = "") -> str:
     token = _get_tenant_access_token()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -603,7 +602,7 @@ def create_feishu_document(title: str, sections: list[tuple[str, list[dict[str, 
     resp.raise_for_status()
     root_block_id = resp.json().get("data", {}).get("document", {}).get("document_id")
 
-    blocks = _build_doc_blocks(sections)
+    blocks = _build_doc_blocks(sections, daily_summary)
     write_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}/blocks/{root_block_id}/children"
 
     batch_size = 50
@@ -640,23 +639,29 @@ def job_news_push(topics: list[str]) -> int:
         if not news:
             logger.info("「%s」近2天内没有相关新闻，大壮一号将在文档中吐槽后跳过。", topic)
 
-    # ========== 为所有新闻生成 AI 摘要 ==========
+    # ========== 生成全局 AI 总结 ==========
+    daily_summary = ""
     if DEEPSEEK_API_KEY:
-        logger.info("开始为新闻生成 AI 摘要...")
-        _enrich_news_with_summaries(sections)
+        logger.info("开始为今日所有新闻生成全局 AI 总结...")
+        daily_summary = _generate_daily_summary(sections)
     # ==========================================
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     doc_title = f"大壮一号AI日报 | {today_str}"
     try:
-        doc_url = create_feishu_document(doc_title, sections)
+        doc_url = create_feishu_document(doc_title, sections, daily_summary)
         logger.info("✅ 文档创建成功: %s", doc_url)
     except Exception as e:
         logger.error("创建飞书文档失败: %s", e)
         return 1
 
+    # ========== 飞书群消息拼接：包含总结 ==========
     today_display = datetime.now().strftime("%Y年%m月%d日")
-    message = f"🔔 大壮一号播报 | {today_display}\n大壮家族的朋友们，今日AI日报已生成，请查收：\n{doc_url}"
+    message = f"🔔 大壮一号播报 | {today_display}\n大壮家族的朋友们，今日AI日报已生成！"
+    if daily_summary:
+        message += f"\n\n🧠 【今日AI大事件总结】\n{daily_summary}"
+    message += f"\n\n请查收完整日报：\n{doc_url}"
+    # ============================================
 
     result = send_with_sign(message)
 
