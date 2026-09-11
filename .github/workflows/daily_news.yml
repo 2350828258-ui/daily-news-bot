@@ -1,10 +1,7 @@
 name: Daily News Push
 
 on:
-  schedule:
-    # 每天北京时间 07:30 执行（UTC cron: 30 23 * * *）
-    - cron: '30 23 * * *'
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:  # 仅允许手动或外部 API 触发
 
 jobs:
   push-news:
