@@ -112,7 +112,6 @@ CREATOR_FEEDS = (
     "https://www.reddit.com/r/comfyui/.rss",
     # ===== 国内B站AIGC UP主（把下面的 UP主UID 替换成你喜欢的UP主ID） =====
     # 如何找UID：打开UP主主页，看浏览器地址栏 https://space.bilibili.com/12345678，那串数字就是UID
-    # 找到后把下面三行里的 "UP主UID" 替换成真实数字，并去掉行首的 # 注释符号即可启用
     "https://rsshub.app/bilibili/user/video/412615990",
     # "https://rsshub.app/bilibili/user/video/UP主UID_2",
     # "https://rsshub.app/bilibili/user/video/UP主UID_3",
@@ -163,6 +162,11 @@ def _env_int(name: str, default: int) -> int:
 
 PUSH_HOUR = _env_int("PUSH_HOUR", DEFAULT_PUSH_HOUR)
 PUSH_MINUTE = _env_int("PUSH_MINUTE", DEFAULT_PUSH_MINUTE)
+
+
+def now_beijing() -> datetime:
+    """返回北京时间（UTC+8），不带时区信息，方便直接格式化。"""
+    return datetime.utcnow() + timedelta(hours=8)
 
 
 def validate_config() -> None:
@@ -510,7 +514,7 @@ def _get_or_create_monthly_folder(token: str, headers: dict) -> str:
     if not FEISHU_ARCHIVE_FOLDER_TOKEN:
         return ""
 
-    current_month = datetime.now().strftime("%Y-%m")
+    current_month = now_beijing().strftime("%Y-%m")
     logger.info("检查归档文件夹: %s", current_month)
 
     try:
@@ -540,7 +544,7 @@ def _get_or_create_monthly_folder(token: str, headers: dict) -> str:
 
 
 def _build_doc_blocks(sections: list[tuple[str, list[dict[str, str]]]], daily_summary: str = "") -> list[dict]:
-    today = datetime.now().strftime("%Y年%m月%d日")
+    today = now_beijing().strftime("%Y年%m月%d日")
     blocks = []
 
     blocks.append(_text_block("大壮家族的朋友们，集合啦！我是你们的老朋友——大壮一号！"))
@@ -656,7 +660,7 @@ def job_news_push(topics: list[str]) -> int:
         daily_summary = _generate_daily_summary(sections)
     # ==========================================
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now_beijing().strftime("%Y-%m-%d")
     doc_title = f"大壮一号AI日报 | {today_str}"
     try:
         doc_url = create_feishu_document(doc_title, sections, daily_summary)
@@ -666,7 +670,7 @@ def job_news_push(topics: list[str]) -> int:
         return 1
 
     # ========== 飞书群消息拼接：包含总结 ==========
-    today_display = datetime.now().strftime("%Y年%m月%d日")
+    today_display = now_beijing().strftime("%Y年%m月%d日")
     message = f"🔔 大壮一号播报 | {today_display}\n大壮家族的朋友们，今日AI日报已生成！"
     if daily_summary:
         message += f"\n\n🧠 【今日AI大事件总结】\n{daily_summary}"
